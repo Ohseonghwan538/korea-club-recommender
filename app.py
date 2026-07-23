@@ -143,7 +143,7 @@ if st.button("🚀 나에게 꼭 맞는 동호회 찾기", type="primary"):
             if gemini_api_key:
                 try:
                     genai.configure(api_key=gemini_api_key)
-                    llm = genai.GenerativeModel("gemini-1.5-flash")
+                    llm = genai.GenerativeModel("gemini-2.5-flash")
                     prompt = f"""
                     당신은 국내 최고 맞춤형 동호회 매칭 전문가입니다.
                     유저 프로필과 매칭 1위 동호회 정보를 바탕으로 설레는 초대장과 추천 사유를 작성해주세요.
