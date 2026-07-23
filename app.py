@@ -26,7 +26,7 @@ st.caption("Nemotron-Personas-Korea 인구 페르소나 X 한국관광공사 Tou
 TOUR_API_KEY = st.secrets.get("TOUR_API_KEY", "")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
-# 100% 검증된 한국 관련 고화질 이미지 (경복궁, 한옥마을, 제주, 한식 등)
+# 100% 검증된 한국 관련 고화질 이미지
 KOREA_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1538485399081-7191377e8241?w=600", # 서울 한옥/궁궐
     "https://images.unsplash.com/photo-1548115184-bc6544d06a58?w=600", # N서울타워 전경
@@ -120,63 +120,75 @@ def get_persona_embeddings(_model, texts):
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
 def fetch_tour_api_places(region_name, num_rows=30):
-    """한국관광공사 TourAPI 4.0 이중 인코딩 방지 안전 호출"""
+    """한국관광공사 TourAPI 4.0 안전 호출 (params 파라미터 활용)"""
     if not TOUR_API_KEY:
-        st.warning("⚠️ TOUR_API_KEY가 없어 지역별 실제 도로명 기반 기본 데이터가 표시됩니다.")
+        st.warning("⚠️ TOUR_API_KEY가 등록되어 있지 않아 지역 기본 데이터로 표시합니다.")
         return get_mock_places(region_name)
     
     area_code = AREA_INFO[region_name]["code"]
-    
-    # 인증키 이중 인코딩 방지를 위해 urllib.parse.unquote 적용
-    decoded_key = urllib.parse.unquote(TOUR_API_KEY)
-    
     endpoint = "http://apis.data.go.kr/B551011/KorService1/areaBasedList1"
-    # URL 쿼리 스트링 직접 구성
-    req_url = (
-        f"{endpoint}?serviceKey={decoded_key}"
-        f"&numOfRows={num_rows}&pageNo=1&MobileOS=ETC&MobileApp=KoreaTravelApp"
-        f"&_type=json&areaCode={area_code}&arrange=O"
-    )
+    
+    # 키에 이미 % 문자가 들어있는 경우 unquote하여 원본 디코딩 키 상태로 정돈
+    clean_key = urllib.parse.unquote(TOUR_API_KEY)
+    
+    params = {
+        "serviceKey": clean_key,
+        "numOfRows": num_rows,
+        "pageNo": 1,
+        "MobileOS": "ETC",
+        "MobileApp": "KoreaTravelApp",
+        "_type": "json",
+        "areaCode": area_code,
+        "arrange": "O"
+    }
     
     try:
-        response = requests.get(req_url, timeout=10)
+        response = requests.get(endpoint, params=params, timeout=10)
+        
         if response.status_code == 200:
-            data = response.json()
-            items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
-            
-            if items:
-                cleaned_places = []
-                for idx, item in enumerate(items):
-                    addr1 = item.get("addr1", "").strip()
-                    addr2 = item.get("addr2", "").strip()
-                    full_address = f"{addr1} {addr2}".strip()
-                    
-                    if not full_address:
-                        full_address = f"{region_name} {AREA_INFO[region_name]['road']}"
-                    
-                    # 이미지 검증
-                    img_url = item.get("firstimage") or item.get("firstimage2")
-                    if not img_url:
-                        img_url = KOREA_FALLBACK_IMAGES[idx % len(KOREA_FALLBACK_IMAGES)]
-                    
-                    cleaned_places.append({
-                        "title": item.get("title", f"{region_name} 대표 명소"),
-                        "addr": full_address,
-                        "image": img_url,
-                        "tel": item.get("tel", f"{AREA_INFO[region_name]['tel_prefix']}-123-4567")
-                    })
-                return cleaned_places
-            else:
-                st.warning("⚠️ TourAPI 응답 데이터가 비어 있어 지역 기본 데이터로 표시합니다.")
+            try:
+                data = response.json()
+                header = data.get("response", {}).get("header", {})
+                result_code = header.get("resultCode", "")
+                
+                # 정상 응답 (0000)
+                if result_code == "0000":
+                    items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+                    if items:
+                        cleaned_places = []
+                        for idx, item in enumerate(items):
+                            addr1 = item.get("addr1", "").strip()
+                            addr2 = item.get("addr2", "").strip()
+                            full_address = f"{addr1} {addr2}".strip()
+                            
+                            if not full_address:
+                                full_address = f"{region_name} {AREA_INFO[region_name]['road']}"
+                            
+                            img_url = item.get("firstimage") or item.get("firstimage2")
+                            if not img_url:
+                                img_url = KOREA_FALLBACK_IMAGES[idx % len(KOREA_FALLBACK_IMAGES)]
+                            
+                            cleaned_places.append({
+                                "title": item.get("title", f"{region_name} 대표 명소"),
+                                "addr": full_address,
+                                "image": img_url,
+                                "tel": item.get("tel", f"{AREA_INFO[region_name]['tel_prefix']}-123-4567")
+                            })
+                        return cleaned_places
+                else:
+                    st.error(f"⚠️ TourAPI 응답 오류 메시지: {header.get('resultMsg', '인증키 확인 필요')}")
+            except Exception:
+                st.error("⚠️ TourAPI 응답 데이터를 JSON으로 파싱할 수 없습니다.")
         else:
-            st.error(f"⚠️ TourAPI 호출 실패 (HTTP 상태 코드: {response.status_code})")
+            st.error(f"⚠️ TourAPI 호출 실패 (HTTP 상태 코드: {response.status_code})\nSecrets의 TOUR_API_KEY가 '디코딩 키'인지 확인해주세요.")
+            
     except Exception as e:
-        st.error(f"⚠️ TourAPI 연동 중 오류 발생: {e}")
+        st.error(f"⚠️ TourAPI 연동 중 네트워크 오류 발생: {e}")
     
     return get_mock_places(region_name)
 
 def get_mock_places(region_name):
-    """API 연동 전/실패 시 지역에 맞는 정교한 실제 도로명 데이터"""
+    """API 호출 실패 시 표시되는 정교한 기본 주소 데이터"""
     info = AREA_INFO[region_name]
     prefix = info["tel_prefix"]
     road = info["road"]
