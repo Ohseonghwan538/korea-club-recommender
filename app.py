@@ -17,15 +17,15 @@ st.set_page_config(
 )
 
 st.title("✈️ 성향 맞춤 한국 여행 코스 추천 시뮬레이터")
-st.caption("Nemotron-Personas-Korea 인구 페르소나 X 카카오 로컬 API 실시간 데이터 기반 AI 여행 플래너")
+st.caption("Nemotron-Personas-Korea 인구 페르소나 X 카카오 로컬 & 이미지 API 실시간 데이터 기반 AI 여행 플래너")
 
 # ==========================================
-# 2. Secrets 환경변수 및 검증된 한국 고화질 이미지
+# 2. Secrets 환경변수 및 기본 백업 이미지
 # ==========================================
 KAKAO_API_KEY = st.secrets.get("KAKAO_API_KEY", "")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
-# 100% 검증된 한국 관련 고화질 이미지
+# 이미지 검색 실패 시 대체용 기본 이미지
 KOREA_FALLBACK_IMAGES = [
     "https://images.unsplash.com/photo-1538485399081-7191377e8241?w=600",
     "https://images.unsplash.com/photo-1548115184-bc6544d06a58?w=600",
@@ -83,7 +83,7 @@ if not KAKAO_API_KEY:
     st.sidebar.error("⚠️ KAKAO_API_KEY가 설정되지 않았습니다. Secrets에 등록해주세요.")
 
 # ==========================================
-# 4. 데이터 로드 및 카카오 로컬 API 연동 함수
+# 4. 데이터 로드 및 카카오 API 연동 함수
 # ==========================================
 @st.cache_data(show_spinner="Nemotron 페르소나 데이터셋 로드 중...")
 def load_persona_data():
@@ -117,16 +117,33 @@ def get_persona_embeddings(_model, texts):
 
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
-def fetch_kakao_places(region_name, size=10):
-    """카카오 로컬 API - 키워드 검색 (안전한 Header 인증 방식)"""
+def fetch_kakao_image(query_text, clean_key):
+    """카카오 이미지 검색 API를 활용해 장소/주소별 실제 사진 URL 반환"""
+    url = "https://dapi.kakao.com/v2/search/image"
+    headers = {"Authorization": f"KakaoAK {clean_key}"}
+    params = {"query": query_text, "size": 1}
+    
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=3)
+        if res.status_code == 200:
+            docs = res.json().get("documents", [])
+            if docs:
+                return docs[0].get("image_url") or docs[0].get("thumbnail_url")
+    except Exception:
+        pass
+    return None
+
+def fetch_kakao_places(region_name, size=6):
+    """카카오 로컬 API(장소 검색) + 카카오 이미지 API(사진 검색) 결합"""
     if not KAKAO_API_KEY:
-        st.warning("⚠️ KAKAO_API_KEY가 없어 기본 대체 데이터를 표시합니다.")
+        st.warning("⚠️ KAKAO_API_KEY가 설정되지 않았습니다.")
         return get_fallback_places(region_name)
     
-    url = "https://dapi.kakao.com/v2/local/search/keyword.json"
-    headers = {"Authorization": f"KakaoAK {KAKAO_API_KEY.strip()}"}
+    raw_key = KAKAO_API_KEY.strip()
+    clean_key = raw_key.replace("KakaoAK", "").strip()
     
-    # 지역 명소 키워드 검색
+    url = "https://dapi.kakao.com/v2/local/search/keyword.json"
+    headers = {"Authorization": f"KakaoAK {clean_key}"}
     params = {
         "query": f"{region_name} 가볼만한곳 명소",
         "size": size
@@ -142,22 +159,32 @@ def fetch_kakao_places(region_name, size=10):
             if documents:
                 places = []
                 for idx, doc in enumerate(documents):
-                    # 도로명 주소 우선, 없으면 지번 주소 사용
+                    place_name = doc.get("place_name", f"{region_name} 대표 명소")
                     addr = doc.get("road_address_name") or doc.get("address_name") or f"{region_name} 대표 주소"
                     tel = doc.get("phone")
                     if not tel:
                         tel = f"{AREA_INFO.get(region_name, {}).get('tel_prefix', '02')}-123-4567"
                     
+                    # 카카오 이미지 검색 API로 실제 장소 사진 조회
+                    img_search_query = f"{region_name} {place_name}"
+                    real_image_url = fetch_kakao_image(img_search_query, clean_key)
+                    
+                    # 이미지 검색 실패 시 백업 이미지 지정
+                    if not real_image_url:
+                        real_image_url = KOREA_FALLBACK_IMAGES[idx % len(KOREA_FALLBACK_IMAGES)]
+                    
                     places.append({
-                        "title": doc.get("place_name", f"{region_name} 대표 명소"),
+                        "title": place_name,
                         "addr": addr,
-                        "image": KOREA_FALLBACK_IMAGES[idx % len(KOREA_FALLBACK_IMAGES)],
+                        "image": real_image_url,
                         "tel": tel,
                         "url": doc.get("place_url", "")
                     })
                 return places
+        elif response.status_code == 403:
+            st.error("⚠️ 카카오 API 인증 실패 (HTTP 403)\nKakao Developers에서 [REST API 키]를 정확히 복사했는지 확인해주세요.")
         else:
-            st.error(f"⚠️ 카카오 API 호출 실패 (HTTP {response.status_code})\nSecrets의 KAKAO_API_KEY를 확인해주세요.")
+            st.error(f"⚠️ 카카오 API 호출 실패 (HTTP {response.status_code})")
             
     except Exception as e:
         st.error(f"⚠️ 카카오 API 연동 중 오류 발생: {e}")
@@ -189,8 +216,8 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
         df_matched["match_score"] = (sim_scores * 100).round(1)
         matched_persona = df_matched.sort_values(by="match_score", ascending=False).iloc[0]
 
-    # 2) 카카오 로컬 API 실시간 장소 검색
-    with st.spinner(f"2️⃣ 카카오 로컬 API에서 [{selected_region}] 실시간 실제 장소/주소 조회 중..."):
+    # 2) 카카오 API 실시간 장소 & 사진 검색
+    with st.spinner(f"2️⃣ 카카오 API에서 [{selected_region}] 실시간 명소, 주소 및 실제 이미지 조회 중..."):
         real_places = fetch_kakao_places(selected_region)
 
     st.success(f"🎉 Nemotron 페르소나 매칭도 {matched_persona['match_score']}%! [{selected_region}] 맞춤 코스가 설계되었습니다.")
@@ -212,7 +239,7 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
                 
                 prompt = f"""
                 당신은 대한민국 최고 맞춤형 여행 코스 컨설턴트입니다.
-                아래 유저 프로필과 실시간 카카오 로컬 API로 검색된 장소/주소 목록을 바탕으로 [{travel_duration}] 코스를 설계해 주세요.
+                아래 유저 프로필과 실시간 카카오 API로 검색된 장소/주소 목록을 바탕으로 [{travel_duration}] 코스를 설계해 주세요.
 
                 [유저 성향]
                 - 희망 지역/일정: {selected_region} / {travel_duration}
@@ -246,7 +273,7 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
 
     with col_right:
         st.subheader("📸 카카오 추천 명소 & 실제 주소")
-        for idx, place in enumerate(real_places[:6]):
+        for idx, place in enumerate(real_places):
             with st.container(border=True):
                 c_img, c_info = st.columns([1, 1.4])
                 with c_img:
