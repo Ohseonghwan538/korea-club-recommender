@@ -20,22 +20,20 @@ st.title("✈️ 성향 맞춤 한국 여행 코스 추천 시뮬레이터")
 st.caption("Nemotron-Personas-Korea 인구 페르소나 X 카카오 로컬 & 이미지 API 실시간 데이터 기반 AI 여행 플래너")
 
 # ==========================================
-# 2. Secrets 환경변수 및 기본 백업 이미지
+# 2. Secrets 환경변수 및 테마별 백업 이미지
 # ==========================================
 KAKAO_API_KEY = st.secrets.get("KAKAO_API_KEY", "")
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
-# 이미지 검색 실패 시 대체용 기본 이미지
-KOREA_FALLBACK_IMAGES = [
-    "https://images.unsplash.com/photo-1538485399081-7191377e8241?w=600",
-    "https://images.unsplash.com/photo-1548115184-bc6544d06a58?w=600",
-    "https://images.unsplash.com/photo-1578637387939-43c525550085?w=600",
-    "https://images.unsplash.com/photo-1517154421773-0529f29ea451?w=600",
-    "https://images.unsplash.com/photo-1590301157890-4810ed352733?w=600",
-    "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600",
-]
+# 장소 유형별 고화질 백업 이미지 (HTTPS 검증 완료)
+THEME_IMAGES = {
+    "food": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=600",      # 정갈한 한식/맛집
+    "cafe": "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=600",      # 감성 카페
+    "nature": "https://images.unsplash.com/photo-1578637387939-43c525550085?w=600",    # 자연/산/수목원
+    "culture": "https://images.unsplash.com/photo-1538485399081-7191377e8241?w=600",   # 한옥/문화재/역사
+    "default": "https://images.unsplash.com/photo-1548115184-bc6544d06a58?w=600"    # 대표 전경
+}
 
-# 한국 광역시/도 기본 정보
 AREA_INFO = {
     "서울특별시": {"road": "종로구 사직로 161", "tel_prefix": "02"},
     "인천광역시": {"road": "중구 차이나타운로 59", "tel_prefix": "032"},
@@ -62,7 +60,7 @@ AREA_INFO = {
 st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
 st.sidebar.subheader("1. 여행 기본 정보")
-selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=4) # 기본값: 광주광역시
+selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=4)
 travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일"], index=1)
 user_age = st.sidebar.slider("연령대", 18, 70, 25)
 companion = st.sidebar.selectbox("동행인", ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"], index=1)
@@ -83,7 +81,7 @@ if not KAKAO_API_KEY:
     st.sidebar.error("⚠️ KAKAO_API_KEY가 설정되지 않았습니다. Secrets에 등록해주세요.")
 
 # ==========================================
-# 4. 데이터 로드 및 카카오 API 연동 함수
+# 4. 데이터 로드 및 카카오 API 안전 연동 함수
 # ==========================================
 @st.cache_data(show_spinner="Nemotron 페르소나 데이터셋 로드 중...")
 def load_persona_data():
@@ -117,24 +115,43 @@ def get_persona_embeddings(_model, texts):
 
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
-def fetch_kakao_image(query_text, clean_key):
-    """카카오 이미지 검색 API를 활용해 장소/주소별 실제 사진 URL 반환"""
+def get_smart_fallback_image(place_name):
+    """장소 이름 키워드 분석을 통한 테마별 고화질 사진 반환"""
+    if any(k in place_name for k in ["식당", "맛집", "집", "가든", "갈비", "국밥", "오리", "육전", "음식"]):
+        return THEME_IMAGES["food"]
+    elif any(k in place_name for k in ["카페", "커피", "디저트", "베이커리", "찻집"]):
+        return THEME_IMAGES["cafe"]
+    elif any(k in place_name for k in ["산", "공원", "수목원", "숲", "길", "생태", "호수", "강"]):
+        return THEME_IMAGES["nature"]
+    elif any(k in place_name for k in ["서원", "사지", "사던", "유적", "문화", "한옥", "성", "절", "사"]):
+        return THEME_IMAGES["culture"]
+    return THEME_IMAGES["default"]
+
+def fetch_kakao_image(query_text, clean_key, place_name=""):
+    """카카오 CDN 기반 안전한 HTTPS 썸네일 이미지 조회"""
     url = "https://dapi.kakao.com/v2/search/image"
     headers = {"Authorization": f"KakaoAK {clean_key}"}
-    params = {"query": query_text, "size": 1}
+    params = {"query": query_text, "size": 3}
     
     try:
         res = requests.get(url, headers=headers, params=params, timeout=3)
         if res.status_code == 200:
             docs = res.json().get("documents", [])
-            if docs:
-                return docs[0].get("image_url") or docs[0].get("thumbnail_url")
+            for doc in docs:
+                # 핫링크 방지가 없는 카카오 CDN 썸네일 URL 사용
+                img_url = doc.get("thumbnail_url") or doc.get("image_url", "")
+                if img_url:
+                    # HTTPS 보안 프로토콜 강제 적용 (Mixed Content 방지)
+                    if img_url.startswith("http://"):
+                        img_url = img_url.replace("http://", "https://")
+                    return img_url
     except Exception:
         pass
-    return None
+        
+    return get_smart_fallback_image(place_name)
 
 def fetch_kakao_places(region_name, size=6):
-    """카카오 로컬 API(장소 검색) + 카카오 이미지 API(사진 검색) 결합"""
+    """카카오 로컬 API(장소) + 카카오 이미지 API(HTTPS 썸네일) 안전 연동"""
     if not KAKAO_API_KEY:
         st.warning("⚠️ KAKAO_API_KEY가 설정되지 않았습니다.")
         return get_fallback_places(region_name)
@@ -158,25 +175,21 @@ def fetch_kakao_places(region_name, size=6):
             
             if documents:
                 places = []
-                for idx, doc in enumerate(documents):
+                for doc in documents:
                     place_name = doc.get("place_name", f"{region_name} 대표 명소")
                     addr = doc.get("road_address_name") or doc.get("address_name") or f"{region_name} 대표 주소"
                     tel = doc.get("phone")
                     if not tel:
                         tel = f"{AREA_INFO.get(region_name, {}).get('tel_prefix', '02')}-123-4567"
                     
-                    # 카카오 이미지 검색 API로 실제 장소 사진 조회
+                    # 카카오 이미지 검색 API 호출 (HTTPS 보장)
                     img_search_query = f"{region_name} {place_name}"
-                    real_image_url = fetch_kakao_image(img_search_query, clean_key)
-                    
-                    # 이미지 검색 실패 시 백업 이미지 지정
-                    if not real_image_url:
-                        real_image_url = KOREA_FALLBACK_IMAGES[idx % len(KOREA_FALLBACK_IMAGES)]
+                    safe_image_url = fetch_kakao_image(img_search_query, clean_key, place_name)
                     
                     places.append({
                         "title": place_name,
                         "addr": addr,
-                        "image": real_image_url,
+                        "image": safe_image_url,
                         "tel": tel,
                         "url": doc.get("place_url", "")
                     })
@@ -195,11 +208,11 @@ def get_fallback_places(region_name):
     info = AREA_INFO.get(region_name, {"road": "중앙로 1", "tel_prefix": "02"})
     road, prefix = info["road"], info["tel_prefix"]
     return [
-        {"title": f"{region_name} 국립 문화 예술 공간", "addr": f"{region_name} {road}", "image": KOREA_FALLBACK_IMAGES[0], "tel": f"{prefix}-123-4567"},
-        {"title": f"{region_name} 감성 한옥 마을 및 카페거리", "addr": f"{region_name} {road} 인근", "image": KOREA_FALLBACK_IMAGES[1], "tel": f"{prefix}-234-5678"},
-        {"title": f"{region_name} 대표 로컬 한식 맛집 거리", "addr": f"{region_name} 맛집골목", "image": KOREA_FALLBACK_IMAGES[5], "tel": f"{prefix}-345-6789"},
-        {"title": f"{region_name} 자연 힐링 수목 산책로", "addr": f"{region_name} 수목원길 1", "image": KOREA_FALLBACK_IMAGES[2], "tel": f"{prefix}-456-7890"},
-        {"title": f"{region_name} 뷰 맛집 전망대 & 카페", "addr": f"{region_name} 전망대길 10", "image": KOREA_FALLBACK_IMAGES[3], "tel": f"{prefix}-567-8901"}
+        {"title": f"{region_name} 국립 문화 예술 공간", "addr": f"{region_name} {road}", "image": THEME_IMAGES["culture"], "tel": f"{prefix}-123-4567"},
+        {"title": f"{region_name} 감성 한옥 마을 및 카페거리", "addr": f"{region_name} {road} 인근", "image": THEME_IMAGES["cafe"], "tel": f"{prefix}-234-5678"},
+        {"title": f"{region_name} 대표 로컬 한식 맛집 거리", "addr": f"{region_name} 맛집골목", "image": THEME_IMAGES["food"], "tel": f"{prefix}-345-6789"},
+        {"title": f"{region_name} 자연 힐링 수목 산책로", "addr": f"{region_name} 수목원길 1", "image": THEME_IMAGES["nature"], "tel": f"{prefix}-456-7890"},
+        {"title": f"{region_name} 뷰 맛집 전망대 & 카페", "addr": f"{region_name} 전망대길 10", "image": THEME_IMAGES["default"], "tel": f"{prefix}-567-8901"}
     ]
 
 # ==========================================
@@ -216,8 +229,8 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
         df_matched["match_score"] = (sim_scores * 100).round(1)
         matched_persona = df_matched.sort_values(by="match_score", ascending=False).iloc[0]
 
-    # 2) 카카오 API 실시간 장소 & 사진 검색
-    with st.spinner(f"2️⃣ 카카오 API에서 [{selected_region}] 실시간 명소, 주소 및 실제 이미지 조회 중..."):
+    # 2) 카카오 API 실시간 장소 & 이미지 검색
+    with st.spinner(f"2️⃣ 카카오 API에서 [{selected_region}] 실시간 명소, 주소 및 안전한 이미지를 조회 중..."):
         real_places = fetch_kakao_places(selected_region)
 
     st.success(f"🎉 Nemotron 페르소나 매칭도 {matched_persona['match_score']}%! [{selected_region}] 맞춤 코스가 설계되었습니다.")
