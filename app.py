@@ -57,10 +57,10 @@ user_age = st.sidebar.slider("연령대", 18, 70, 28)
 companion = st.sidebar.selectbox("동행인", ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"], index=1)
 
 st.sidebar.subheader("2. 세부 취향 (관심사)")
-interest_travel = st.sidebar.text_input("🏕️ 여행 스타일", "도시 체험, 이 도시에서만 할 수 있는 특별한 경험, 핫플 탐방")
-interest_culinary = st.sidebar.text_input("🍱 미식 / 식음료", "서울 핫플레이스 맛집, 미쉐린/로컬 푸드, 감성 디저트")
-interest_arts = st.sidebar.text_input("🖼️ 문화 / 예술", "트렌디한 팝업스토어, 현대 미술관, 도심 속 문화 공간")
-interest_sports = st.sidebar.text_input("🚴 액티비티 / 레포츠", "한강 러닝, 한강 시티뷰 산책, 실내 액티비티")
+interest_travel = st.sidebar.text_input("🏕️ 여행 스타일", "도시 체험, 핫플 탐방")
+interest_culinary = st.sidebar.text_input("🍱 미식 / 식음료", "서울 핫플레이스 맛집, 감성 디저트")
+interest_arts = st.sidebar.text_input("🖼️ 문화 / 예술", "트렌디한 팝업스토어, 도심 속 문화 공간")
+interest_sports = st.sidebar.text_input("🚴 액티비티 / 레포츠", "한강 러닝, 실내 액티비티")
 
 st.sidebar.subheader("3. 성향 요약")
 user_bio = st.sidebar.text_area(
