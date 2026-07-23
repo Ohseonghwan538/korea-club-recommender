@@ -1,85 +1,95 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import requests
+import json
+import random
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import google.generativeai as genai
 
-# -----------------------------------------------------------------------------
-# 1. 페이지 및 기본 레이아웃 설정
-# -----------------------------------------------------------------------------
+# ==========================================
+# 1. 페이지 설정 및 기본 레이아웃
+# ==========================================
 st.set_page_config(
-    page_title="모여라! 취향 맞춤 동호회 추천 플랫폼",
-    page_icon="🧩",
+    page_title="취향 콕! 성향 맞춤 한국 여행 코스 추천 시뮬레이터",
+    page_icon="✈️",
     layout="wide"
 )
 
-st.title("🧩 나의 성향 맞춤 동호회 찾기")
-st.caption("Hugging Face Nemotron-Personas-Korea 데이터셋 기반 AI 동호회 매칭 시뮬레이터")
+st.title("✈️ 성향 맞춤 한국 여행 코스 추천 시뮬레이터")
+st.caption("Nemotron-Personas-Korea 인구 페르소나 X 한국관광공사 TourAPI 4.0 실시간 데이터 기반 AI 여행 플래너")
 
-# -----------------------------------------------------------------------------
-# 2. 사이드바 - 유저 프로필 입력
-# -----------------------------------------------------------------------------
-st.sidebar.header("⚙️ 유저 프로필 & 설정")
+# ==========================================
+# 2. Secrets 환경변수 확인
+# ==========================================
+TOUR_API_KEY = st.secrets.get("TOUR_API_KEY", "")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
-# Gemini API Key (선택)
-gemini_api_key = st.sidebar.text_input("Gemini API Key (선택: AI 맞춤 추천서)", type="password")
+# 지역 코드 매핑 (한국관광공사 TourAPI 기준)
+AREA_CODES = {
+    "서울특별시": "1", "인천광역시": "2", "대전광역시": "3", "대구광역시": "4",
+    "광주광역시": "5", "부산광역시": "6", "울산광역시": "7", "세종특별자치시": "8",
+    "경기도": "31", "강원특별자치도": "32", "충청북도": "33", "충청남도": "34",
+    "전라북도": "35", "전라남도": "36", "경상북도": "37", "경상남도": "38", "제주특별자치도": "39"
+}
 
-st.sidebar.subheader("1. 기본 정보")
-user_region = st.sidebar.selectbox(
-    "거주 / 활동 지역",
-    ["전체", "서울특별시", "경기도", "인천광역시", "부산광역시", "대구광역시", "대전광역시", "광주광역시", "울산광역시", "강원특별자치도", "충청북도", "충청남도", "전라북도", "전라남도", "경상북도", "경상남도", "제주특별자치도"]
-)
+# ==========================================
+# 3. 사이드바 - 유저 여행 성향 입력
+# ==========================================
+st.sidebar.header("⚙️ 유저 여행 성향 설정")
+
+st.sidebar.subheader("1. 여행 기본 정보")
+selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_CODES.keys()), index=0)
+travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일"], index=0)
 user_age = st.sidebar.slider("연령대", 18, 70, 28)
+companion = st.sidebar.selectbox("동행인", ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"])
 
-st.sidebar.subheader("2. 관심 분야")
-interest_sports = st.sidebar.text_input("⚽ 스포츠 / 운동", "러닝, 플러깅, 등산")
-interest_arts = st.sidebar.text_input("🎨 예술 / 문화", "전시회 관람, 사진 촬영")
-interest_travel = st.sidebar.text_input("✈️ 여행 / 야외활동", "주말 캠핑, 드라이브")
-interest_culinary = st.sidebar.text_input("☕ 음식 / 카페 / 술", "수제맥주, 맛집 탐방")
+st.sidebar.subheader("2. 세부 취향 (관심사)")
+interest_travel = st.sidebar.text_input("🏕️ 여행 스타일", "힐링, 오션뷰 카페, 트레킹")
+interest_culinary = st.sidebar.text_input("🍱 미식 / 식음료", "현지 로컬 맛집, 정갈한 한식, 디저트")
+interest_arts = st.sidebar.text_input("🖼️ 문화 / 예술", "미술관, 한옥 마을, 역사 탐방")
+interest_sports = st.sidebar.text_input("🚴 액티비티 / 레포츠", "가벼운 산책, 해양 레저")
 
-st.sidebar.subheader("3. 나의 성향 요약")
+st.sidebar.subheader("3. 성향 요약")
 user_bio = st.sidebar.text_area(
-    "라이프스타일 및 모임 성향",
-    "퇴근 후나 주말에 가볍게 사람들과 어울리고, 운동 후 맛있는 소주나 맥주 한잔하는 것을 즐깁니다. 친근하고 부담 없는 분위기를 원해요."
+    "나의 라이프스타일 & 여행관",
+    "너무 빽빽한 일정보다는 여유롭게 풍경을 감상하고, 맛있는 음식을 먹으며 힐링하는 여행을 좋아합니다."
 )
 
-# -----------------------------------------------------------------------------
-# 3. 데이터셋 및 임베딩 모델 로드 (캐싱 적용)
-# -----------------------------------------------------------------------------
-@st.cache_data(show_spinner="한국인 페르소나 데이터셋을 로드하는 중입니다...")
+# Secrets 미설정시 안내 박스
+if not TOUR_API_KEY or not GEMINI_API_KEY:
+    st.sidebar.warning(
+        "💡 Secrets 설정 필요:\n"
+        "- TOUR_API_KEY (한국관광공사 API Key)\n"
+        "- GEMINI_API_KEY (Google Gemini API Key)\n"
+        "설정되지 않은 경우 시뮬레이션용 데모 데이터로 작동합니다."
+    )
+
+# ==========================================
+# 4. 데이터 로드 및 한국관광공사 TourAPI 연동 함수
+# ==========================================
+@st.cache_data(show_spinner="Nemotron 페르소나 데이터셋을 로드 중입니다...")
 def load_persona_data():
-    # Streamlit Cloud 메모리 한계를 고려하여 2,000건 샘플링 로드
-    ds = load_dataset("nvidia/Nemotron-Personas-Korea", split="train[:2000]")
+    ds = load_dataset("nvidia/Nemotron-Personas-Korea", split="train[:1500]")
     records = []
     for idx, item in enumerate(ds):
-        interests = []
-        if item.get("sports"): interests.append(f"스포츠: {item['sports']}")
-        if item.get("arts"): interests.append(f"예술: {item['arts']}")
-        if item.get("travel"): interests.append(f"여행: {item['travel']}")
-        if item.get("culinary"): interests.append(f"음식: {item['culinary']}")
-        
-        interest_text = " / ".join(interests) if interests else "일상 대화 및 친목"
+        travel = item.get("travel", "")
+        culinary = item.get("culinary", "")
         concise = item.get("concise", "")
-        location = item.get("location", "전국")
-        age = item.get("age", 30)
-        
-        # 벡터 검색 대상 텍스트 생성
-        matching_text = f"지역: {location} | 연령: {age}세 | 관심사: {interest_text} | 성향: {concise}"
-        
+        matching_text = f"여행취향: {travel} | 미식: {culinary} | 라이프스타일: {concise}"
         records.append({
             "id": f"persona_{idx}",
-            "age": age,
-            "location": location,
-            "occupation": item.get("occupation", "직장인"),
-            "interests": interest_text,
+            "age": item.get("age", 30),
+            "location": item.get("location", "전국"),
+            "travel": travel,
+            "culinary": culinary,
             "summary": concise,
             "matching_text": matching_text
         })
     return pd.DataFrame(records)
 
-@st.cache_resource(show_spinner="AI 매칭 임베딩 모델을 준비하는 중입니다...")
+@st.cache_resource(show_spinner="AI 매칭 임베딩 모델을 준비 중입니다...")
 def load_embedding_model():
     return SentenceTransformer("jhgan/ko-sroberta-multitask")
 
@@ -92,88 +102,142 @@ def get_persona_embeddings(_model, texts):
 
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
-# -----------------------------------------------------------------------------
-# 4. 동호회 매칭 및 결과 출력
-# -----------------------------------------------------------------------------
-if st.button("🚀 나에게 꼭 맞는 동호회 찾기", type="primary"):
-    with st.spinner("유저 성향 분석 및 동호회 매칭 진행 중..."):
-        # 1. 유저 쿼리 벡터 변환
-        user_query_text = f"지역: {user_region} | 연령: {user_age}세 | 관심사: {interest_sports}, {interest_arts}, {interest_travel}, {interest_culinary} | 성향: {user_bio}"
+def fetch_tour_api_places(area_code, num_rows=30):
+    """한국관광공사 국문 관광정보 서비스 (KorService1) - areaBasedList1 연동"""
+    if not TOUR_API_KEY:
+        return get_mock_places(selected_region)
+    
+    url = "http://apis.data.go.kr/B551011/KorService1/areaBasedList1"
+    params = {
+        "serviceKey": TOUR_API_KEY,
+        "numOfRows": num_rows,
+        "pageNo": 1,
+        "MobileOS": "ETC",
+        "MobileApp": "PersonaTravelApp",
+        "_type": "json",
+        "areaCode": area_code,
+        "arrange": "O" # 대표이미지 있는 항목 우선
+    }
+    
+    try:
+        response = requests.get(url, params=params, timeout=8)
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+            if items:
+                cleaned_places = []
+                for item in items:
+                    cleaned_places.append({
+                        "title": item.get("title", "관광지"),
+                        "addr": item.get("addr1", "주소 정보 없음"),
+                        "image": item.get("firstimage", "https://via.placeholder.com/400x250?text=No+Image"),
+                        "content_type": item.get("contenttypeid", "12"),
+                        "tel": item.get("tel", "")
+                    })
+                return cleaned_places
+    except Exception as e:
+        st.error(f"TourAPI 호출 중 오류 발생 (데모 데이터로 대체): {e}")
+    
+    return get_mock_places(selected_region)
+
+def get_mock_places(region_name):
+    """API Key 미설정 또는 장애 시 사용하는 가상 장소 데이터"""
+    return [
+        {"title": f"{region_name} 대표 힐링 수목원", "addr": f"{region_name} 중앙로 102", "image": "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500", "content_type": "12", "tel": "02-123-4567"},
+        {"title": f"{region_name} 감성 오션뷰/전망 카페", "addr": f"{region_name} 해안도로 45", "image": "https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=500", "content_type": "39", "tel": "02-234-5678"},
+        {"title": f"{region_name} 로컬 한식 미식 거리", "addr": f"{region_name} 맛집길 12", "image": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=500", "content_type": "39", "tel": "02-345-6789"},
+        {"title": f"{region_name} 역사 & 문화 미술관", "addr": f"{region_name} 문화로 88", "image": "https://images.unsplash.com/photo-1518998053901-5348d3961a04?w=500", "content_type": "14", "tel": "02-456-7890"},
+        {"title": f"{region_name} 야경 명소 & 산책로", "addr": f"{region_name} 야경길 77", "image": "https://images.unsplash.com/photo-1519501025264-65ba15a82390?w=500", "content_type": "12", "tel": "02-567-8901"}
+    ]
+
+# ==========================================
+# 5. 추천 실행 및 화면 구성
+# ==========================================
+if st.button("✈️ 나의 성향 맞춤 여행 코스 설계하기", type="primary"):
+    with st.spinner("1️⃣ Nemotron 인구 데이터 기반 나의 페르소나 매칭 중..."):
+        user_query_text = f"여행취향: {interest_travel} | 미식: {interest_culinary} | 문화: {interest_arts} | 성향: {user_bio}"
         user_vector = embed_model.encode([user_query_text])
-        
-        # 2. 유사도 계산
         sim_scores = cosine_similarity(user_vector, persona_embeddings)[0]
         
-        df_result = df_personas.copy()
-        df_result["match_score"] = (sim_scores * 100).round(1)
-        
-        # 3. 하드 필터링 (지역 필터)
-        if user_region != "전체":
-            df_filtered = df_result[df_result["location"].str.contains(user_region, na=False)]
-            if len(df_filtered) >= 3:
-                df_result = df_filtered
-        
-        top_matches = df_result.sort_values(by="match_score", ascending=False).head(5)
-        
-        st.success("🎯 회원님의 성향과 가장 매칭률이 높은 동호회를 찾았습니다!")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        # 동호회 매칭 리스트
-        with col1:
-            st.subheader("👥 추천 동호회 TOP 3")
-            for idx, (_, row) in enumerate(top_matches.head(3).iterrows()):
-                with st.container(border=True):
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        st.markdown(f"### 🏆 {idx+1}위 추천 동호회 (적합도: `{row['match_score']}%`)")
-                        st.markdown(f"**📍 주요 활동지:** {row['location']} | **👤 주요 연령대:** {row['age']}세 ({row['occupation']})")
-                        st.markdown(f"**🎨 동호회 메인 관심사:** {row['interests']}")
-                        st.markdown(f"**💬 모임 성향/분위기:** {row['summary']}")
-                    with c2:
-                        st.metric(label="매칭률", value=f"{row['match_score']}%")
-                        if st.button(f"가입 신청 #{idx+1}", key=f"btn_{idx}"):
-                            st.toast(f"'{row['interests']}' 동호회에 가입 신청 메시지를 보냈습니다!", icon="🎉")
+        df_personas_matched = df_personas.copy()
+        df_personas_matched["match_score"] = (sim_scores * 100).round(1)
+        matched_persona = df_personas_matched.sort_values(by="match_score", ascending=False).iloc[0]
 
-        # LLM 추천서
-        with col2:
-            st.subheader("🤖 AI 맞춤 동호회 추천서")
-            top_match = top_matches.iloc[0]
-            
-            if gemini_api_key:
-                try:
-                    genai.configure(api_key=gemini_api_key)
-                    llm = genai.GenerativeModel("gemini-3.1-flash-lite")
-                    prompt = f"""
-                    당신은 국내 최고 맞춤형 동호회 매칭 전문가입니다.
-                    유저 프로필과 매칭 1위 동호회 정보를 바탕으로 설레는 초대장과 추천 사유를 작성해주세요.
+    with st.spinner(f"2️⃣ 한국관광공사 TourAPI에서 [{selected_region}] 실시간 관광/맛집 정보 조회 중..."):
+        area_code = AREA_CODES.get(selected_region, "1")
+        real_places = fetch_tour_api_places(area_code)
 
-                    [유저 프로필]
-                    - 연령/지역: {user_age}세 / {user_region}
-                    - 관심사: {interest_sports}, {interest_arts}, {interest_travel}, {interest_culinary}
-                    - 성향: {user_bio}
+    st.success(f"🎉 Nemotron 페르소나 매칭도 {matched_persona['match_score']}%! [{selected_region}] 맞춤 코스가 생성되었습니다.")
 
-                    [매칭 1위 동호회]
-                    - 지역: {top_match['location']}
-                    - 관심사: {top_match['interests']}
-                    - 분위기: {top_match['summary']}
-                    - 매칭률: {top_match['match_score']}%
+    # 매칭된 페르소나 브리핑
+    with st.expander("🔍 AI가 분석한 나의 한국인 페르소나 유형", expanded=False):
+        st.write(f"**- 가장 가까운 인구 페르소나:** {matched_persona['age']}세 / {matched_persona['location']} 거주")
+        st.write(f"**- 페르소나 라이프스타일:** {matched_persona['summary']}")
+        st.write(f"**- 선호 여행/미식 스타일:** {matched_persona['travel']} / {matched_persona['culinary']}")
 
-                    [작성 가이드]
-                    1. 동호회 이름 제안 (센스있고 위트있게)
-                    2. 이 동호회를 추천하는 이유 3가지
-                    3. 첫 모임 추천 활동 코스
-                    """
-                    response = llm.generate_content(prompt)
-                    st.info(response.text)
-                except Exception as e:
-                    st.error(f"Gemini API 호출 중 오류 발생: {e}")
-            else:
-                st.warning("👈 사이드바에 Gemini API Key를 입력하면 AI가 생성한 맞춤형 초대장을 받아보실 수 있습니다.")
-                st.markdown(f"""
-                **[1위 매칭 동호회 요약]**
-                * **모임 스타일:** {top_match['location']} {top_match['interests'].split('/')[0]} 크루
-                * **추천 사유:** 입력하신 라이프스타일과 동호회 멤버들의 성향 유사도가 **{top_match['match_score']}%**로 가장 높습니다.
-                """)
+    # Gemini LLM 기반 여행 코스 구성
+    with st.spinner("3️⃣ AI 여행 플래너가 실시간 관광지 데이터로 여행 코스를 디자인하고 있습니다..."):
+        ai_itinerary = ""
+        if GEMINI_API_KEY:
+            try:
+                genai.configure(api_key=GEMINI_API_KEY)
+                llm = genai.GenerativeModel("gemini-1.5-flash")
+                places_text = "\n".join([f"- {p['title']} ({p['addr']})" for p in real_places[:12]])
+                
+                prompt = f"""
+                당신은 국내 최고 맞춤형 여행 코스 컨설턴트입니다.
+                아래 유저 프로필과 한국관광공사 실시간 장소 목록을 바탕으로 [{travel_duration}] 완벽 맞춤 코스를 구성해 주세요.
+
+                [유저 성향]
+                - 여행지/일정: {selected_region} / {travel_duration}
+                - 동행인: {companion}
+                - 여행/미식 취향: {interest_travel}, {interest_culinary}, {interest_arts}
+                - 라이프스타일: {user_bio}
+                - 매칭된 한국인 페르소나 특징: {matched_persona['summary']}
+
+                [한국관광공사 실시간 장소 후보]
+                {places_text}
+
+                [작성 요청사항]
+                1. 유저의 성향에 어울리는 감성적인 여행 타이틀 (예: "여유와 미식이 함께하는 {selected_region} 힐링 로드")
+                2. [{travel_duration}] 시간 순서별 (오전/점심/오후/저녁 등) 상세 동선 및 코스 구성
+                3. 각 장소별로 "왜 이 유저의 성향과 어울리는지" 1-2문장 명확한 추천 이유 작성
+                4. 이동 동선 및 미식 팁 제공
+                """
+                response = llm.generate_content(prompt)
+                ai_itinerary = response.text
+            except Exception as e:
+                st.error(f"Gemini AI 코스 생성 중 오류: {e}")
+
+    # UI 출력
+    col_left, col_right = st.columns([1.2, 1])
+
+    with col_left:
+        st.subheader(f"🗺️ [{selected_region}] {travel_duration} 추천 여행 코스")
+        if ai_itinerary:
+            st.markdown(ai_itinerary)
+        else:
+            st.info("""
+            **[기본 추천 동선 예시]**
+            * **오전 (10:00):** 지역 대표 힐링 산책로 탐방 (자연 속 힐링)
+            * **점심 (12:30):** 로컬 맛집 거리에서 한상 차림 미식 체험
+            * **오후 (14:30):** 감성 오션뷰/전망 카페에서 여유로운 티타임
+            * **저녁 (17:30):** 야경 명소 및 문화 거리 산책
+            *(💡 Secrets에 GEMINI_API_KEY를 등록하시면 실시간 AI 코스 설명서가 자동 작성됩니다.)*
+            """)
+
+    with col_right:
+        st.subheader("📸 코스 포함 대표 관광지 / 맛집 정보")
+        for idx, place in enumerate(real_places[:5]):
+            with st.container(border=True):
+                c_img, c_info = st.columns([1, 1.5])
+                with c_img:
+                    st.image(place["image"], use_container_width=True)
+                with c_info:
+                    st.markdown(f"**{idx+1}. {place['title']}**")
+                    st.caption(f"📍 {place['addr']}")
+                    if place['tel']:
+                        st.caption(f"📞 {place['tel']}")
+
 else:
-    st.info("👈 왼쪽 사이드바에서 프로필 정보를 입력하고 **'나에게 꼭 맞는 동호회 찾기'** 버튼을 누르면 매칭이 시작됩니다.")
+    st.info("👈 사이드바에서 여행 희망 지역과 성향을 선택한 후 **'나의 성향 맞춤 여행 코스 설계하기'** 버튼을 누르면 추천이 시작됩니다.")
