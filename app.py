@@ -181,7 +181,7 @@ if st.button("✈️ 나의 성향 맞춤 여행 코스 설계하기", type="pri
         if GEMINI_API_KEY:
             try:
                 genai.configure(api_key=GEMINI_API_KEY)
-                llm = genai.GenerativeModel("gemini-1.5-flash")
+                llm = genai.GenerativeModel("gemini-3.1-flash-lite")
                 places_text = "\n".join([f"- {p['title']} ({p['addr']})" for p in real_places[:12]])
                 
                 prompt = f"""
