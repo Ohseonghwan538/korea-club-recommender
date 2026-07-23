@@ -108,7 +108,7 @@ def get_persona_embeddings(_model, texts):
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
 def fetch_kakao_places(region_name, query_style, size=6):
-    """카카오 로컬 API 키워드 검색 (장소/주소/전화번호/카카오맵 URL 보장)"""
+    """카카오 로컬 API 키워드 검색 (장소/주소/전화번호/카카오맵 주소 링크 보장)"""
     if not KAKAO_API_KEY:
         st.warning("⚠️ KAKAO_API_KEY가 설정되지 않았습니다. 기본 장소를 추천합니다.")
         return get_fallback_places(region_name)
@@ -141,11 +141,9 @@ def fetch_kakao_places(region_name, query_style, size=6):
                     if not tel:
                         tel = f"{AREA_INFO.get(region_name, {}).get('tel_prefix', '02')}-123-4567"
                     
-                    # URL 생성 보장: place_url이 없으면 카카오맵 검색 링크로 생성
-                    place_url = doc.get("place_url")
-                    if not place_url:
-                        encoded_query = urllib.parse.quote(f"{region_name} {place_name}")
-                        place_url = f"https://map.kakao.com/link/search/{encoded_query}"
+                    # URL 생성 보장: 실제 주소(addr) 기반으로 카카오맵 검색 링크 생성
+                    encoded_addr = urllib.parse.quote(addr)
+                    place_url = f"https://map.kakao.com/link/search/{encoded_addr}"
                     
                     places.append({
                         "title": place_name,
@@ -165,22 +163,22 @@ def fetch_kakao_places(region_name, query_style, size=6):
     return get_fallback_places(region_name)
 
 def get_fallback_places(region_name):
-    """API 실패 시 사용할 기본 장소 및 카카오맵 검색 링크 목록"""
-    info = AREA_INFO.get(region_name, {"road": "종로구 사직로 161", "tel_prefix": "02"})
-    road, prefix = info["road"], info["tel_prefix"]
+    """API 실패 시 사용할 기본 장소 및 주소 기반 카카오맵 검색 링크 목록"""
+    info = AREA_INFO.get(region_name, {"road": "서울특별시 종로구 사직로 161", "tel_prefix": "02"})
+    prefix = info["tel_prefix"]
     
     fallback_items = [
-        {"title": f"{region_name} 성수동 이색 팝업 스토어 & 문화공간", "addr": f"{region_name} 성동구 연무장길 1", "tel": f"{prefix}-123-4567"},
-        {"title": f"{region_name} 익선동 한옥 이색 감성 카페거리", "addr": f"{region_name} 종로구 수표로28길", "tel": f"{prefix}-234-5678"},
-        {"title": f"{region_name} DDP 동대문디자인플라자 전시", "addr": f"{region_name} 중구 을지로 281", "tel": f"{prefix}-345-6789"},
-        {"title": f"{region_name} 한강 달빛 야경 & 야시장 체험", "addr": f"{region_name} 서초구 신반포로11길 40", "tel": f"{prefix}-456-7890"},
-        {"title": f"{region_name} 용산 용리단길 로컬 맛집 거리", "addr": f"{region_name} 용산구 한강대로38길", "tel": f"{prefix}-567-8901"}
+        {"title": f"{region_name} 성수동 이색 팝업 스토어 & 문화공간", "addr": "서울특별시 성동구 연무장길 1", "tel": f"{prefix}-123-4567"},
+        {"title": f"{region_name} 익선동 한옥 이색 감성 카페거리", "addr": "서울특별시 종로구 수표로28길 28", "tel": f"{prefix}-234-5678"},
+        {"title": f"{region_name} DDP 동대문디자인플라자 전시", "addr": "서울특별시 중구 을지로 281", "tel": f"{prefix}-345-6789"},
+        {"title": f"{region_name} 한강 달빛 야경 & 반포한강공원", "addr": "서울특별시 서초구 신반포로11길 40", "tel": f"{prefix}-456-7890"},
+        {"title": f"{region_name} 용산 용리단길 로컬 맛집 거리", "addr": "서울특별시 용산구 한강대로38길 15", "tel": f"{prefix}-567-8901"}
     ]
     
-    # 각 기본 장소에 대한 카카오맵 검색 링크 추가
+    # 각 장소의 실제 주소를 카카오맵 링크에 인코딩하여 설정
     for item in fallback_items:
-        encoded_query = urllib.parse.quote(item["title"])
-        item["url"] = f"https://map.kakao.com/link/search/{encoded_query}"
+        encoded_addr = urllib.parse.quote(item["addr"])
+        item["url"] = f"https://map.kakao.com/link/search/{encoded_addr}"
         
     return fallback_items
 
@@ -217,7 +215,7 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
                 genai.configure(api_key=GEMINI_API_KEY)
                 llm = genai.GenerativeModel("gemini-3.1-flash-lite")
                 
-                places_text = "\n".join([f"- 장소명: {p['title']} | 실제주소: {p['addr']} | 링크: {p['url']}" for p in real_places])
+                places_text = "\n".join([f"- 장소명: {p['title']} | 실제주소: {p['addr']} | 카카오맵 주소 링크: {p['url']}" for p in real_places])
                 
                 prompt = f"""
                 당신은 대한민국 최고 맞춤형 여행 코스 컨설턴트입니다.
@@ -235,7 +233,7 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
                 [작성 요청사항]
                 1. 유저 성향에 딱 맞는 감성적인 코스 타이틀 (예: 서울에서만 느낄 수 있는 독특한 도시 경험)
                 2. [{travel_duration}] 시간 순서별 (오전/점심/오후/저녁) 코스 안내
-                3. **[필수] 장소 언급 시 소괄호 안에 지도 검색이 가능한 실제 주소 및 카카오맵 링크를 함께 표시할 것 (예: [장소명](링크) (주소: ...))**
+                3. **[필수] 장소 언급 시 소괄호 안에 실제 주소 및 주소 연결 링크를 표시할 것 (예: [장소명](카카오맵 주소 링크) (주소: 실제 주소))**
                 4. 이 도시(서울)에서만 경험할 수 있는 독특한 포인트 위주로 각 장소별 개인화 추천 사유 (1-2문장) 작성
                 """
                 response = llm.generate_content(prompt)
@@ -261,6 +259,8 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
                 st.markdown(f"📍 **실제 주소:** `{place['addr']}`")
                 st.caption(f"📞 {place['tel']}")
                 
-                # 항상 표시되는 카카오맵 상세보기/길찾기 링크
-                link_url = place.get("url") or f"https://map.kakao.com/link/search/{urllib.parse.quote(place['title'])}"
-                st.markdown(f"[🔗 카카오맵에서 위치 및 경로 보기]({link_url})")
+                # 실제 주소(place['addr']) 기반으로 카카오맵 이동 링크 구성
+                encoded_addr = urllib.parse.quote(place['addr'])
+                address_map_url = f"https://map.kakao.com/link/search/{encoded_addr}"
+                
+                st.markdown(f"[🔗 카카오맵에서 위치 및 경로 보기]({address_map_url})")
