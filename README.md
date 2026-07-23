@@ -1,9 +1,9 @@
-# 🧩 Nemotron-Personas 기반 AI 동호회 추천 플랫폼
+# ✈️ Nemotron-Personas X TourAPI 성향 맞춤 여행 코스 추천 시뮬레이터
 
-본 프로젝트는 Hugging Face의 `nvidia/Nemotron-Personas-Korea` 데이터셋과 **SentenceTransformers 기반 벡터 검색(RAG)**을 활용하여 사용자의 성향, 지역, 관심사에 최적화된 동호회를 매칭해주는 **Streamlit 웹 애플리케이션**입니다.
+본 프로젝트는 Hugging Face의 `nvidia/Nemotron-Personas-Korea` 페르소나 데이터셋과 **한국관광공사 TourAPI 4.0(국문 관광정보 서비스)** 실시간 OpenAPI 데이터를 결합하여 사용자의 성향과 취향에 맞춘 **여행 코스(Itinerary)**를 자동 생성하는 Streamlit 웹 애플리케이션입니다.
 
 ## 🌟 주요 기능
-1. **유저 라이프스타일 입력**: 연령, 지역, 세부 관심사(운동, 예술, 여행, 맛집), 성향 서술
-2. **벡터 유사도 매칭 (Vector Search)**: `jhgan/ko-sroberta-multitask` 한국어 임베딩 모델 기반 코사인 유사도 분석
-3. **하이브리드 필터링**: 지역 하드 필터링 + 취향 의도 검색 결합
-4. **LLM 기반 맞춤 추천서 생성**: Gemini API 연동 시 AI 동호회 초대장 및 추천 코스 자동 작성
+1. **페르소나 임베딩 매칭**: Nemotron 데이터셋에서 유저와 취향이 가장 유사한 한국인 페르소나 매칭.
+2. **실시간 TourAPI 연동**: 한국관광공사 OpenAPI를 통해 전국 시/도 관광지, 문화시설, 맛집, 레포츠 실시간 수집.
+3. **Gemini AI 여행 코스 생성**: 시간 순서별 당일치기/1박 2일 동선 및 개인화 추천 사유 자동 작성.
+4. **Secrets 보안 지향**: API Key를 코드에 노출하지 않고 `st.secrets`로 안전하게 관리.
