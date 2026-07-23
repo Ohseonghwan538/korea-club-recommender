@@ -200,7 +200,7 @@ if st.button("✈️ 나의 성향 맞춤 한국 여행 코스 설계하기", ty
         if GEMINI_API_KEY:
             try:
                 genai.configure(api_key=GEMINI_API_KEY)
-                llm = genai.GenerativeModel("gemini-1.5-flash")
+                llm = genai.GenerativeModel("gemini-3.1-flash-lite")
                 
                 # 장소와 실제 주소를 프롬프트에 제공
                 places_text = "\n".join([f"- 장소명: {p['title']} | 실제주소: {p['addr']}" for p in real_places[:12]])
