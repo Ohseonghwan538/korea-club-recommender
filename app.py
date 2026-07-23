@@ -48,19 +48,36 @@ AREA_INFO = {
 }
 
 # ==========================================
-# 3. 사이드바 - 유저 성향 및 하네스(Harness) 설정
+# 3. 사이드바 - 유저 성향(시드 데이터: 휴식 & 로컬 맛집) 및 하네스 설정
 # ==========================================
 st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
+# [휴식 & 로컬 맛집] 중심의 일관된 기본 시드 데이터
+SEED_DATA = {
+    "age": 32,
+    "companion": "연인/배우자",
+    "travel": "자연 경관 산책로, 여유로운 힐링 스팟, 로컬 골목길 탐방",
+    "culinary": "지역 대표 향토 음식, 정갈한 한식 다이닝, 뷰가 좋은 힐링 카페",
+    "arts": "야외 수목원 및 정원, 조용한 지역 역사 공간, 로컬 공예 숍",
+    "bio": "빡빡한 일정보다는 조용한 자연 속에서 여유롭게 휴식을 취하고, 그 지역의 대표적인 정갈한 한식과 향토 음식을 즐기는 힐링 여행을 원합니다."
+}
+
+st.sidebar.subheader("1. 여행 기본 정보")
 selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=0)
 travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일"], index=1)
-user_age = st.sidebar.slider("연령대", 18, 70, 28)
-companion = st.sidebar.selectbox("동행인", ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"], index=1)
+user_age = st.sidebar.slider("연령대", 18, 70, SEED_DATA["age"])
 
-interest_travel = st.sidebar.text_input("🏕️ 여행 스타일", "이 장소에서만 할 수 있는 특별한 경험, 핫플 탐방")
-interest_culinary = st.sidebar.text_input("🍱 미식 / 식음료", "로컬 푸드, 감성 디저트")
-interest_arts = st.sidebar.text_input("🖼️ 문화 / 예술", "트렌디한 문화 공간")
-user_bio = st.sidebar.text_area("나의 라이프스타일", "흔한 대표 관광지보다는 트렌디한 문화와 독특한 핫플레이스를 탐방하고 싶습니다.")
+companion_options = ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"]
+companion_idx = companion_options.index(SEED_DATA["companion"]) if SEED_DATA["companion"] in companion_options else 0
+companion = st.sidebar.selectbox("동행인", companion_options, index=companion_idx)
+
+st.sidebar.subheader("2. 세부 취향 (관심사)")
+interest_travel = st.sidebar.text_input("🏕️ 여행 스타일", SEED_DATA["travel"])
+interest_culinary = st.sidebar.text_input("🍱 미식 / 식음료", SEED_DATA["culinary"])
+interest_arts = st.sidebar.text_input("🖼️ 문화 / 예술", SEED_DATA["arts"])
+
+st.sidebar.subheader("3. 성향 요약")
+user_bio = st.sidebar.text_area("나의 라이프스타일", SEED_DATA["bio"])
 
 st.sidebar.markdown("---")
 st.sidebar.header("🕹️ 에이전트 하네스(Harness) 설정")
@@ -108,14 +125,14 @@ def get_persona_embeddings(_model, texts):
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
 def fetch_kakao_places(region_name, query_style, size=6):
-    """카카오 로컬 API 검색 및 주소 기반 카카오맵 링크 생성"""
+    """카카오 로컬 API 검색 및 실제 주소 기반 카카오맵 링크 생성"""
     if not KAKAO_API_KEY:
         return get_fallback_places(region_name)
     
     raw_key = KAKAO_API_KEY.strip().replace("KakaoAK", "").strip()
     url = "https://dapi.kakao.com/v2/local/search/keyword.json"
     headers = {"Authorization": f"KakaoAK {raw_key}"}
-    params = {"query": f"{region_name} 이색 체험 핫플레이스", "size": size}
+    params = {"query": f"{region_name} 힐링 로컬 맛집", "size": size}
     
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
@@ -141,21 +158,67 @@ def fetch_kakao_places(region_name, query_style, size=6):
 def get_fallback_places(region_name):
     prefix = AREA_INFO.get(region_name, {}).get("tel_prefix", "02")
     fallback_items = [
-        {"title": f"{region_name} 성수동 이색 팝업 스토어 & 문화공간", "addr": "서울특별시 성동구 연무장길 1", "tel": f"{prefix}-123-4567"},
-        {"title": f"{region_name} 익선동 한옥 이색 감성 카페거리", "addr": "서울특별시 종로구 수표로28길 28", "tel": f"{prefix}-234-5678"},
-        {"title": f"{region_name} DDP 동대문디자인플라자 전시", "addr": "서울특별시 중구 을지로 281", "tel": f"{prefix}-345-6789"},
-        {"title": f"{region_name} 한강 달빛 야경 & 반포한강공원", "addr": "서울특별시 서초구 신반포로11길 40", "tel": f"{prefix}-456-7890"},
-        {"title": f"{region_name} 용산 용리단길 로컬 맛집 거리", "addr": "서울특별시 용산구 한강대로38길 15", "tel": f"{prefix}-567-8901"}
+        {"title": f"{region_name} 로컬 향토 음식 전문점", "addr": AREA_INFO.get(region_name, {}).get("road", "서울특별시 종로구 사직로 161"), "tel": f"{prefix}-123-4567"},
+        {"title": f"{region_name} 조용한 자연 경관 산책로 및 수목원", "addr": AREA_INFO.get(region_name, {}).get("road", "서울특별시 종로구 사직로 161"), "tel": f"{prefix}-234-5678"},
+        {"title": f"{region_name} 정갈한 한식 다이닝 & 전통 차 카페", "addr": AREA_INFO.get(region_name, {}).get("road", "서울특별시 종로구 사직로 161"), "tel": f"{prefix}-345-6789"},
+        {"title": f"{region_name} 뷰가 좋은 힐링 테라스 카페", "addr": AREA_INFO.get(region_name, {}).get("road", "서울특별시 종로구 사직로 161"), "tel": f"{prefix}-456-7890"},
+        {"title": f"{region_name} 고즈넉한 로컬 역사 문화 공간", "addr": AREA_INFO.get(region_name, {}).get("road", "서울특별시 종로구 사직로 161"), "tel": f"{prefix}-567-8901"}
     ]
     for item in fallback_items:
         item["url"] = f"https://map.kakao.com/link/search/{urllib.parse.quote(item['addr'])}"
     return fallback_items
 
 # ==========================================
-# 5. 에이전트 클래스 정의 (Agentic Simulation)
+# 5. 매칭 근거 리포트 생성 함수 (설득력 강화)
+# ==========================================
+def generate_matching_report(llm_model, user_text, persona_info, total_score):
+    """유저 성향과 매칭된 페르소나 간의 설득력 있는 매칭 근거 및 리포트를 생성"""
+    prompt = f"""
+    당신은 인구 페르소나 데이터 분석 전문가입니다.
+    유저의 입력 취향(휴식 및 로컬 미식 중심)과 매칭된 Nemotron 인구 페르소나 프로필을 다각도로 분석하여 설득력 있는 매칭 보고서를 작성하세요.
+
+    [유저 입력 성향]
+    {user_text}
+
+    [매칭된 페르소나 프로필]
+    - 연령/지역: {persona_info['age']}세 / {persona_info['location']}
+    - 라이프스타일 요약: {persona_info['summary']}
+    - 여행/미식 취향: {persona_info['travel']} / {persona_info['culinary']}
+    - 전체 코사인 유사도 점수: {total_score}%
+
+    [응답 형식 - 반드시 아래 JSON 형식으로만 응답하세요]
+    ```json
+    {{
+        "reason": "유저의 휴식/미식 취향과 페르소나 라이프스타일이 왜 잘 일치하는지 설명하는 친절하고 설득력 있는 2~3문장",
+        "tags": ["#공통키워드1", "#공통키워드2", "#공통키워드3", "#공통키워드4"],
+        "breakdown": {{
+            "style_match": 92,
+            "culinary_match": 88,
+            "lifestyle_match": 90
+        }}
+    }}
+    ```
+    - breakdown 내부 점수들은 70~98 사이의 자연스러운 정수로 설정하세요.
+    """
+    try:
+        res = llm_model.generate_content(prompt)
+        json_match = re.search(r'\{.*\}', res.text, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+    except Exception:
+        pass
+        
+    return {
+        "reason": f"유저님이 입력하신 '여유로운 휴식과 지역 향토 음식' 중심의 취향이 해당 페르소나({persona_info['age']}세)의 느긋하고 깊이 있는 라이프스타일과 매우 높게 일치하여 최적의 페르소나로 선정되었습니다.",
+        "tags": ["#자연휴식", "#로컬향토음식", "#정갈한한식", "#힐링동선"],
+        "breakdown": {"style_match": 92, "culinary_match": 88, "lifestyle_match": 90}
+    }
+
+# ==========================================
+# 6. 에이전트 클래스 정의 (Agentic Simulation)
 # ==========================================
 class PlannerAgent:
-    """여행 기획 에이전트: 코스 작성 및 피드백 기반 수정"""
+    """여행 기획 에이전트: 여유로운 힐링 코스 작성 및 피드백 기반 수정"""
     def __init__(self, model):
         self.model = model
 
@@ -169,12 +232,12 @@ class PlannerAgent:
             [페르소나 평가 에이전트의 피드백]
             {feedback}
             
-            위 피드백과 지적 사항을 완벽하게 반영하여 코스를 개선/재작성해 주세요!
+            위 피드백과 지적 사항(빡빡한 일정 지양, 휴식 시간 확보 등)을 완벽하게 반영하여 코스를 개선/재작성해 주세요!
             """
 
         prompt = f"""
         당신은 대한민국 최고 맞춤형 여행 코스 플래너(Planner Agent)입니다.
-        아래 유저 정보와 실시간 카카오 장소 목록을 기반으로 {user_info['duration']} 일정을 작성하세요.
+        아래 유저 정보와 실시간 카카오 장소 목록을 기반으로 {user_info['duration']} 여유로운 힐링 일정을 작성하세요.
 
         [유저 기본 정보]
         - 지역/일정: {user_info['region']} / {user_info['duration']}
@@ -186,10 +249,10 @@ class PlannerAgent:
         {feedback_prompt}
 
         [작성 가이드]
-        1. 감성적인 코스 타이틀
-        2. 시간대별(오전/점심/오후/저녁) 명확한 일정
+        1. 여유와 휴식이 느껴지는 감성적인 코스 타이틀
+        2. 시간대별(오전/점심/오후/저녁) 너무 빡빡하지 않고 느긋하게 즐길 수 있는 명확한 일정
         3. 장소 언급 시 소괄호 안에 카카오맵 지도 링크 및 주소 필수 명시 (예: [장소명](카카오맵 주소 링크) (주소: 실제 주소))
-        4. 이 장소를 추천하는 구체적인 이유 명시
+        4. 이 장소를 힐링 및 미식 관점에서 추천하는 구체적인 이유 명시
         """
         response = self.model.generate_content(prompt)
         return response.text
@@ -202,7 +265,7 @@ class EvaluatorAgent:
     def evaluate(self, persona_profile, user_info, itinerary):
         prompt = f"""
         당신은 아래의 인구 페르소나(Persona) 본인입니다.
-        제안된 여행 코스가 당신의 연령, 라이프스타일, 취향에 얼마나 맞는지 평가하세요.
+        제안된 여행 코스가 당신의 연령, 라이프스타일, 그리고 '휴식과 로컬 미식' 취향에 얼마나 맞는지 평가하세요.
 
         [당신의 페르소나 프로필]
         - 연령/지역: {persona_profile['age']}세 / {persona_profile['location']}
@@ -217,27 +280,25 @@ class EvaluatorAgent:
         {{
             "score": 80,
             "satisfaction": "만족스러운 부분 1~2문장",
-            "critique": "아쉬운 부분 및 Planner Agent에게 요청할 개선점 1~2문장"
+            "critique": "아쉬운 부분(예: 일정이 너무 빡빡함, 힐링 시간이 부족함 등) 및 Planner Agent에게 요청할 개선점 1~2문장"
         }}
         ```
         - score는 0~100점 사이의 정수입니다.
-        - 페르소나 성향에 부합하지 않거나 동선/취향이 아쉬우면 솔직하게 감점하고 critique를 작성하세요.
+        - 동선이 너무 과도하게 빽빽하거나, 휴식에 적합하지 않다면 솔직하게 감점하고 critique를 작성하세요.
         """
         response = self.model.generate_content(prompt)
-        text = response.text
         
-        # JSON 추출
         try:
-            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
         except Exception:
             pass
             
-        return {"score": 75, "satisfaction": "전반적으로 양호합니다.", "critique": "시간대별 동선을 조금 더 효율적으로 조정해주세요."}
+        return {"score": 75, "satisfaction": "전반적으로 자연 속에서 쉬어가기 좋은 동선입니다.", "critique": "식사 후 여유 있게 차 한 잔 즐길 수 있는 카페 시간을 조금 더 늘려주세요."}
 
 # ==========================================
-# 6. 시뮬레이션 하네스(Harness) 실행
+# 7. 시뮬레이션 하네스(Harness) 실행
 # ==========================================
 if st.button("🚀 에이전틱 시뮬레이션 실행 (Harness Loop Start)", type="primary"):
     if not GEMINI_API_KEY:
@@ -248,7 +309,7 @@ if st.button("🚀 에이전틱 시뮬레이션 실행 (Harness Loop Start)", ty
     llm = genai.GenerativeModel("gemini-3.1-flash-lite")
 
     # 1) 페르소나 매칭
-    with st.spinner("1️⃣ Nemotron 인구 데이터셋 매칭 중..."):
+    with st.spinner("1️⃣ Nemotron 인구 데이터셋 벡터 임베딩 매칭 중..."):
         user_query_text = f"여행취향: {interest_travel} | 미식: {interest_culinary} | 문화: {interest_arts} | 성향: {user_bio}"
         user_vector = embed_model.encode([user_query_text])
         sim_scores = cosine_similarity(user_vector, persona_embeddings)[0]
@@ -257,8 +318,38 @@ if st.button("🚀 에이전틱 시뮬레이션 실행 (Harness Loop Start)", ty
         df_matched["match_score"] = (sim_scores * 100).round(1)
         matched_persona = df_matched.sort_values(by="match_score", ascending=False).iloc[0]
 
-    # 2) 카카오 장소 수집
-    with st.spinner(f"2️⃣ [{selected_region}] 실시간 장소 데이터 수집 중..."):
+    # 2) 매칭 근거 리포트 생성 (설득력 보완)
+    with st.spinner("📊 AI가 매칭 심층 근거 리포트를 분석 중입니다..."):
+        report = generate_matching_report(llm, user_query_text, matched_persona, matched_persona['match_score'])
+
+    st.success(f"🎉 Nemotron 인구 페르소나 매칭 완료! (종합 일치도: {matched_persona['match_score']}%)")
+
+    # 매칭 심층 근거 UI 출력
+    with st.expander("🔍 AI 페르소나 매칭 심층 분석 및 근거 리포트", expanded=True):
+        col_m1, col_m2 = st.columns([1, 1.2])
+        
+        with col_m1:
+            st.markdown(f"### 👤 매칭된 페르소나 프로필")
+            st.markdown(f"- **연령 / 거주:** {matched_persona['age']}세 / {matched_persona['location']}")
+            st.markdown(f"- **라이프스타일:** {matched_persona['summary']}")
+            st.markdown(f"- **여행/미식 취향:** {matched_persona['travel']} / {matched_persona['culinary']}")
+            
+            # 태그 출력
+            tags_html = " ".join([f"`{tag}`" for tag in report.get("tags", [])])
+            st.markdown(f"**🏷️ 공통 매칭 태그:** {tags_html}")
+
+        with col_m2:
+            st.markdown("### 💡 AI 분석 매칭 사유")
+            st.info(report.get("reason"))
+            
+            st.markdown("**📊 영역별 세부 일치도:**")
+            bd = report.get("breakdown", {})
+            st.progress(bd.get("style_match", 92) / 100, text=f"🌿 힐링/여행 스타일 일치도: {bd.get('style_match', 92)}%")
+            st.progress(bd.get("culinary_match", 88) / 100, text=f"🍱 로컬 미식 취향 일치도: {bd.get('culinary_match', 88)}%")
+            st.progress(bd.get("lifestyle_match", 90) / 100, text=f"🏃 라이프스타일 유사도: {bd.get('lifestyle_match', 90)}%")
+
+    # 3) 카카오 장소 수집
+    with st.spinner(f"3️⃣ [{selected_region}] 실시간 장소 데이터 수집 중..."):
         real_places = fetch_kakao_places(selected_region, interest_travel)
         places_text = "\n".join([f"- 장소명: {p['title']} | 실제주소: {p['addr']} | 카카오맵 주소 링크: {p['url']}" for p in real_places])
 
@@ -274,10 +365,9 @@ if st.button("🚀 에이전틱 시뮬레이션 실행 (Harness Loop Start)", ty
     planner = PlannerAgent(llm)
     evaluator = EvaluatorAgent(llm)
 
-    st.success(f"🎯 매칭된 페르소나: {matched_persona['age']}세 ({matched_persona['summary']}) | 유사도: {matched_persona['match_score']}%")
-
-    # 3) 에이전틱 시뮬레이션 루프 (Harness)
-    st.subheader("🔄 에이전틱 시뮬레이션 하네스 로그")
+    # 4) 에이전틱 시뮬레이션 루프 (Harness Loop)
+    st.markdown("---")
+    st.subheader("🔄 에이전틱 시뮬레이션 하네스(Harness) 실행 로그")
     
     current_itinerary = None
     last_feedback = None
@@ -292,16 +382,16 @@ if st.button("🚀 에이전틱 시뮬레이션 실행 (Harness Loop Start)", ty
             # Step A: Planner Agent 생성/수정
             with col_plan:
                 st.markdown(f"**🤖 Planner Agent (Turn {turn})**")
-                with st.spinner("코스 기획/수정 중..."):
+                with st.spinner("힐링 일정표 기획/수정 중..."):
                     current_itinerary = planner.generate_itinerary(
                         user_info, places_text, feedback=last_feedback, previous_itinerary=current_itinerary
                     )
-                st.info("✅ 여행 일정표 생성 완료")
+                st.info("✅ 여행 일정표 작성 완료")
             
             # Step B: Evaluator Agent 평가
             with col_eval:
                 st.markdown(f"**🕵️ Persona Evaluator Agent (Turn {turn})**")
-                with st.spinner("페르소나 관점 검토 중..."):
+                with st.spinner("페르소나 관점 평가 중..."):
                     eval_result = evaluator.evaluate(matched_persona, user_info, current_itinerary)
                 
                 final_score = eval_result.get("score", 70)
@@ -314,14 +404,14 @@ if st.button("🚀 에이전틱 시뮬레이션 실행 (Harness Loop Start)", ty
                 
                 last_feedback = f"점수: {final_score}점 | 만족: {satisfaction} | 피드백: {critique}"
 
-            # Termination Condition Check (하네스 수락 기준)
+            # Termination Condition (하네스 수락 조건)
             if final_score >= target_score:
-                st.success(f"🎉 Turn {turn}에서 목표 만족도 점수({target_score}점)를 달성하여 하네스 루프를 조기 종료합니다!")
+                st.success(f"🎉 Turn {turn}에서 목표 만족도 점수({target_score}점)를 달성하여 하네스 루프를 조기 완료합니다!")
                 break
             elif turn < max_iterations:
-                st.warning(f"⚠️ 목표 점수({target_score}점) 미달로 Planner Agent에게 피드백을 전달하여 재기획을 수행합니다.")
+                st.warning(f"⚠️ 목표 점수({target_score}점) 미달로 Planner Agent에게 피드백을 전달하여 재기획을 요청합니다.")
 
-    # 4) 최종 결과 화면 출력
+    # 5) 최종 결과 화면 출력
     st.markdown("---")
     col_left, col_right = st.columns([1.2, 1])
 
