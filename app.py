@@ -54,7 +54,7 @@ st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
 SEED_DATA = {
     "start_location": "서울역",
-    "age": 32,
+    "age": 25,
     "companion": "연인/배우자",
     "travel": "자연 경관 산책로, 여유로운 힐링 스팟, 로컬 골목길 탐방",
     "culinary": "지역 대표 향토 음식, 정갈한 한식 다이닝, 뷰가 좋은 힐링 카페",
@@ -65,7 +65,7 @@ SEED_DATA = {
 st.sidebar.subheader("1. 여행 기본 정보")
 start_location = st.sidebar.text_input("🚩 출발지 (시작 위치)", SEED_DATA["start_location"])
 selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=0)
-travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일"], index=1)
+travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일", "2박 3일"], index=1)
 user_age = st.sidebar.slider("연령대", 18, 70, SEED_DATA["age"])
 
 companion_options = ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"]
@@ -82,8 +82,8 @@ user_bio = st.sidebar.text_area("나의 라이프스타일", SEED_DATA["bio"])
 
 st.sidebar.markdown("---")
 st.sidebar.header("🕹️ 에이전트 하네스(Harness) 설정")
-max_iterations = st.sidebar.slider("최대 시뮬레이션 반복 횟수 (Max Turns)", 1, 4, 3)
-target_score = st.sidebar.slider("목표 만족도 점수 (Cut-off Score)", 70, 95, 85)
+max_iterations = st.sidebar.slider("최대 시뮬레이션 반복 횟수 (Max Turns)", 1, 5, 4)
+target_score = st.sidebar.slider("목표 만족도 점수 (Cut-off Score)", 70, 90, 80)
 
 if not KAKAO_API_KEY:
     st.sidebar.error("⚠️ KAKAO_API_KEY가 설정되지 않았습니다.")
