@@ -4,6 +4,7 @@ import requests
 import json
 import urllib.parse
 import re
+import datetime
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -19,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("🤖 사용자 맞춤 에이전틱 한국 여행 코스 플래너")
-st.caption("유저 취향 입력 분석 X 동적 유사 페르소나 비교 X 출발지/이동시간 고려 X 점진적 하네스 시뮬레이션")
+st.caption("유저 취향 입력 분석 X 동적 유사 페르소나 비교 X 출발시각/숙소/동선 고려 X 점진적 하네스 시뮬레이션")
 
 # ==========================================
 # 2. Secrets 환경변수 및 기본 정보
@@ -36,7 +37,7 @@ AREA_INFO = {
     "부산광역시": {"road": "부산광역시 해운대구 해운대해변로 264", "tel_prefix": "051"},
     "울산광역시": {"road": "울산광역시 남구 대학로 93", "tel_prefix": "052"},
     "세종특별자치시": {"road": "세종특별자치시 도움6로 11", "tel_prefix": "044"},
-    "경기도": {"road": "경기도 수원시 수원시 팔달구 효원로 1", "tel_prefix": "031"},
+    "경기도": {"road": "경기도 수원시 팔달구 효원로 1", "tel_prefix": "031"},
     "강원특별자치도": {"road": "강원특별자치도 강릉시 창해로 307", "tel_prefix": "033"},
     "충청북도": {"road": "충청북도 청주시 상당구 상당로 82", "tel_prefix": "043"},
     "충청남도": {"road": "충청남도 공주시 금벽로 368", "tel_prefix": "041"},
@@ -54,6 +55,7 @@ st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
 SEED_DATA = {
     "start_location": "서울역",
+    "departure_time": datetime.time(9, 0),
     "age": 28,
     "companion": "친구들",
     "travel": "도심 핫플레이스, 복합문화공간, 브랜드 공간 및 팝업스토어",
@@ -64,9 +66,12 @@ SEED_DATA = {
 
 st.sidebar.subheader("1. 여행 기본 정보")
 start_location = st.sidebar.text_input("🚩 출발지 (시작 위치)", SEED_DATA["start_location"])
-selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=0)
 
-# [수정 2] "2박 3일" 일정 요소 추가
+# [기능 추가 1] 출발 시각 입력 기능
+departure_time = st.sidebar.time_input("⏰ 출발 시간", SEED_DATA["departure_time"])
+departure_time_str = departure_time.strftime("%H:%M")
+
+selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=0)
 travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일", "2박 3일"], index=1)
 
 user_age = st.sidebar.slider("연령대", 18, 70, SEED_DATA["age"])
@@ -94,7 +99,7 @@ if not GEMINI_API_KEY:
     st.sidebar.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다.")
 
 # ==========================================
-# 4. 데이터 로드 및 다양한 페르소나 인덱싱 (수정 1)
+# 4. 데이터 로드 및 다양한 페르소나 인덱싱
 # ==========================================
 @st.cache_data(show_spinner="인구 페르소나 데이터 베이스 구축 중...")
 def load_persona_data():
@@ -124,7 +129,6 @@ def load_persona_data():
     except Exception:
         pass
 
-    # 다양성이 보장된 자체 페르소나 데이터 셋 (HF 로드 실패 시에도 입력에 맞춰 유연하게 매칭됨)
     fallback_personas = [
         {
             "id": "p_urban", "age": 27, "location": "서울특별시",
@@ -181,12 +185,12 @@ def get_persona_embeddings(_model, texts):
 
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
+# [기능 추가 2] 카카오 지도 숙소 키워드 추가 수집
 def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duration="1박 2일"):
     if not KAKAO_API_KEY:
         return get_fallback_places(region_name)
     
-    # 2박 3일 선택 시 더 많은 장소(12개)를 확보
-    total_size = 12 if travel_duration == "2박 3일" else 8
+    total_size = 14 if travel_duration == "2박 3일" else 10
     
     raw_key = KAKAO_API_KEY.strip().replace("KakaoAK", "").strip()
     url = "https://dapi.kakao.com/v2/local/search/keyword.json"
@@ -198,15 +202,19 @@ def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duratio
     queries = [
         f"{region_name} {travel_kw}",
         f"{region_name} {culinary_kw}",
-        f"{region_name} 핫플레이스",
-        f"{region_name} 대표 관광지"
+        f"{region_name} 핫플레이스"
     ]
     
+    # 1박2일 이상이면 숙소 검색어 필수 추가
+    if travel_duration in ["1박 2일", "2박 3일"]:
+        queries.append(f"{region_name} 감성숙소")
+        queries.append(f"{region_name} 호텔")
+
     places = []
     seen_ids = set()
     
     for query in queries:
-        params = {"query": query, "size": 4}
+        params = {"query": query, "size": 3}
         try:
             res = requests.get(url, headers=headers, params=params, timeout=5)
             if res.status_code == 200:
@@ -248,7 +256,8 @@ def get_fallback_places(region_name):
         {"id": "fb_3", "title": f"{region_name} 현대 미술 갤러리", "addr": base_addr, "tel": f"{prefix}-333-4444", "category": "전시관"},
         {"id": "fb_4", "title": f"{region_name} 트렌디 로컬 다이닝", "addr": base_addr, "tel": f"{prefix}-444-5555", "category": "음식점"},
         {"id": "fb_5", "title": f"{region_name} 도심 팝업스토어 거리", "addr": base_addr, "tel": f"{prefix}-555-6666", "category": "쇼핑"},
-        {"id": "fb_6", "title": f"{region_name} 고즈넉한 수목 산책로", "addr": base_addr, "tel": f"{prefix}-666-7777", "category": "관광명소"}
+        {"id": "fb_hotel1", "title": f"{region_name} 부티크 감성 스테이", "addr": base_addr, "tel": f"{prefix}-777-8888", "category": "숙박"},
+        {"id": "fb_hotel2", "title": f"{region_name} 오션/시티뷰 호텔", "addr": base_addr, "tel": f"{prefix}-888-9999", "category": "숙박"}
     ]
     for item in fallback_items:
         item["url"] = f"https://map.kakao.com/link/search/{urllib.parse.quote(item['addr'])}"
@@ -258,7 +267,7 @@ def get_fallback_places(region_name):
 # 5. 여행 도메인 맞춤 에이전트 클래스
 # ==========================================
 class PlannerAgent:
-    """여행 기획 에이전트: gemini-3.1-flash-lite 모델 적용"""
+    """여행 기획 에이전트: 출발시각 기반 시간대별 타임라인 및 숙소 배치 지원"""
     def __init__(self, model):
         self.model = model
 
@@ -272,11 +281,11 @@ class PlannerAgent:
             [검증관의 지적 및 개선 요구사항]
             {feedback}
             
-            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 감성 스팟 탐방 시간, 식사 및 카페 배치 등을 더 완벽하게 정교화하세요!
+            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 시간대별 스chedule, 숙소 배치, 식사/카페 흐름을 완벽하게 재정교화하세요!
             """
 
         places_text = "\n".join([
-            f"- 장소명: {p['title']} | 주소: {p['addr']} | 카카오맵 URL: {p['url']}"
+            f"- 장소명: {p['title']} | 카테고리: {p.get('category','')} | 주소: {p['addr']} | 카카오맵 URL: {p['url']}"
             for p in places_list
         ])
 
@@ -286,6 +295,7 @@ class PlannerAgent:
 
         [유저 기본 정보]
         - 🚩 출발지 (시작 위치): {user_info['start_location']}
+        - ⏰ 출발 시각: {user_info['departure_time']}
         - 희망 지역/일정: {user_info['region']} / {user_info['duration']}
         - 연령 / 동행인: {user_info['age']}세 / {user_info['companion']}
         - 여행 스타일: {user_info['interest_travel']}
@@ -296,17 +306,17 @@ class PlannerAgent:
         {places_text}
         {feedback_prompt}
 
-        ⚠️ [일정 기획 및 작성 규칙]
-        1. 출발지({user_info['start_location']})에서 첫 장소까지의 이동시간 및 방식을 일정 첫 부분에 기재하세요.
-        2. 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하세요.
-        3. [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
-        4. 여행 일정이 '{user_info['duration']}'임을 명심하여 Day별로 균형 있게 분배하세요. (예: 2박 3일이면 Day 1, Day 2, Day 3 구분)
+        ⚠️ [일정 기획 및 시간 작성 규칙]
+        1. **시간대별 타임라인 필수**: 유저의 출발 시각({user_info['departure_time']})에서 시작하여 각 장소 방문 시간을 `HH:MM ~ HH:MM` 형식으로 명시하세요. (예: `{user_info['departure_time']} ~ 10:15 출발지에서 이동 및 도착`)
+        2. **이동시간 표기**: 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하세요.
+        3. **숙소 추천 규칙**: 여행 일정이 당일치기가 아닌 경우 (1박 2일 또는 2박 3일), 각 일차(Day 1, Day 2)의 **마지막 일정으로 [제공된 목록]에 있는 숙소를 추천**하여 체크인 일정을 포함하세요.
+        4. **마크다운 구문**: [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
         """
         response = self.model.generate_content(prompt)
         return response.text
 
 class EvaluatorAgent:
-    """여행 도메인 검증관: gemini-3.1-flash-lite 모델 적용"""
+    """여행 도메인 검증관: 출발시각 및 숙소 배치 정밀 검증"""
     def __init__(self, model):
         self.model = model
 
@@ -318,7 +328,7 @@ class EvaluatorAgent:
         아래 유저 요구조건과 제안된 여행 일정표({user_info['duration']})를 엄격하게 평가하세요.
 
         [사용자가 입력한 요구 조건]
-        - 출발지: {user_info['start_location']}
+        - 출발지 / 출발시각: {user_info['start_location']} / {user_info['departure_time']}
         - 연령 / 동행인: {user_info['age']}세 / {user_info['companion']}
         - 여행 일정: {user_info['duration']}
         - 여행 스타일: {user_info['interest_travel']}
@@ -329,15 +339,16 @@ class EvaluatorAgent:
         {itinerary}
 
         ⚠️ [여행 하네스 평가 및 점수 산정 규칙]
-        1. Turn 1 (초기 일정)은 이동 동선, 일정 기간({user_info['duration']}) 대비 장소 배치 수, 이동시간 누락 등을 엄격히 지적하며 보통 70~78점대로 평가하세요.
-        2. Turn 2 이상부터 Planner가 이전 지적사항을 반영했다면, 이전 점수({previous_score}점)보다 상승된 점수(+6점 ~ +14점)를 부여하세요.
-        3. 피드백이 충실히 반영되었다면 Turn이 올라갈수록 점수가 점진적으로 우상향하여 목표 점수에 도달하도록 하세요.
+        1. **출발 시각 반영 여부**: 일정의 시작이 유저 출발 시각({user_info['departure_time']})과 부합하는지, 시각별 타임라인이 적절한지 점검하세요.
+        2. **숙소 배치 점검**: 1박2일/2박3일인 경우 적절한 숙소 추천 및 체크인 일정이 반영되어 있는지 평가하세요.
+        3. Turn 1은 소요시간 부족이나 숙소 체크인 시각 미흡 등을 지적하며 보통 70~78점대로 평가하세요.
+        4. Turn 2 이상부터 지적사항이 반영되었다면 이전 점수({previous_score}점)보다 상승된 점수(+6점 ~ +14점)를 부여하세요.
 
         [응답 형식 - 반드시 아래 JSON 형식으로만 답변하세요]
         ```json
         {{
             "score": 85,
-            "satisfaction": "이전 피드백이 반영되어 {user_info['duration']} 일정의 동선 및 유저 취향 밸런스가 개선된 이유 1~2문장",
+            "satisfaction": "{user_info['departure_time']} 출발 시각 기준의 타임라인 동선과 숙소 배치가 개선된 이유 1~2문장",
             "critique": "다음 Turn에서 더욱 완벽해지기 위해 보완할 여행 팁 1문장 (점수가 목표치 이상이면 '추가 보완 없이 최고 수준입니다' 표기)"
         }}
         ```
@@ -354,7 +365,7 @@ class EvaluatorAgent:
         calc_score = min(95, previous_score + 8 if turn > 1 else 75)
         return {
             "score": calc_score,
-            "satisfaction": f"Turn {turn}: 피드백을 반영하여 출발지({user_info['start_location']}) 동선 및 {user_info['duration']} 일정이 정교해졌습니다.",
+            "satisfaction": f"Turn {turn}: {user_info['departure_time']} 출발 시각 및 {user_info['duration']} 일정/숙소 추천 동선이 개선되었습니다.",
             "critique": "장소 간 이동시간 및 체류 시간을 10분만 더 넉넉히 배정하면 완성도가 높아집니다."
         }
 
@@ -368,11 +379,12 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         
     genai.configure(api_key=GEMINI_API_KEY)
     
-    # [수정 3] AI 모델 gemini-3.1-flash-lite 사용
+    # Gemini 3.1 Flash Lite 모델 사용
     llm = genai.GenerativeModel("gemini-3.1-flash-lite")
 
     user_info = {
         "start_location": start_location,
+        "departure_time": departure_time_str,
         "region": selected_region,
         "duration": travel_duration,
         "age": user_age,
@@ -383,7 +395,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         "user_bio": user_bio
     }
 
-    # 1) [수정 1] 사용자 입력 요소 전체를 정교하게 반영한 유저 쿼리 텍스트 구성
+    # 1) 동적 유저 페르소나 매칭
     with st.spinner("1️⃣ 유저 성향 임베딩 & 최적 유사 페르소나 동적 매칭 중..."):
         user_query_text = (
             f"연령대: {user_age}세 | 동행: {companion} | "
@@ -399,13 +411,14 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
 
     st.success(f"🎉 유저 맞춤 분석 완료! (유사 페르소나 데이터 매칭 유사도: {top_match_score}%)")
 
-    # 2) 유저 입력 데이터 vs 동적 유사 페르소나 비교 분석 UI
+    # 2) 비교 UI
     with st.expander("👥 사용자 입력 데이터 VS 매칭된 유사 페르소나 비교 분석", expanded=True):
         col_u, col_p = st.columns(2)
         
         with col_u:
             st.markdown("### 👤 내가 입력한 여행 성향")
-            st.markdown(f"- **출발지 / 일정:** `{user_info['start_location']}` / `{user_info['duration']}`")
+            st.markdown(f"- **출발지 / 출발시각:** `{user_info['start_location']}` / `⏰ {user_info['departure_time']}`")
+            st.markdown(f"- **일정 / 지역:** `{user_info['duration']}` / `{user_info['region']}`")
             st.markdown(f"- **연령 / 동행:** `{user_info['age']}세` / `{user_info['companion']}`")
             st.markdown(f"- **여행 스타일:** {user_info['interest_travel']}")
             st.markdown(f"- **미식 선호:** {user_info['interest_culinary']}")
@@ -418,8 +431,8 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             st.markdown(f"- **유사 미식 취향:** {top_persona['culinary']}")
             st.markdown(f"- **페르소나 요약:** {top_persona['summary']}")
 
-    # 3) 실시간 카카오 장소 수집 (여행 일정이 2박 3일이면 수집 개수 확장)
-    with st.spinner(f"3️⃣ [{selected_region}] ({travel_duration}) 실시간 카카오 지도 장소 매칭 중..."):
+    # 3) 실시간 카카오 장소 + 숙소 수집
+    with st.spinner(f"3️⃣ [{selected_region}] ({travel_duration}) 카카오 지도 장소 및 숙소 정보 매칭 중..."):
         real_places = fetch_kakao_places(selected_region, interest_travel, interest_culinary, travel_duration)
 
     planner = PlannerAgent(llm)
@@ -442,7 +455,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             # Step A: Planner
             with col_plan:
                 st.markdown(f"**🤖 Planner Agent (Turn {turn})**")
-                with st.spinner("이전 피드백 반영 및 이동시간 산출 코스 재작성 중..."):
+                with st.spinner("출발시각 및 숙소 배치 고려 타임라인 작성 중..."):
                     current_itinerary = planner.generate_itinerary(
                         user_info, real_places, turn=turn, feedback=last_feedback, previous_itinerary=current_itinerary
                     )
@@ -451,7 +464,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             # Step B: Evaluator
             with col_eval:
                 st.markdown(f"**🕵️ 사용자 성향 검증관 (Turn {turn})**")
-                with st.spinner("피드백 반영도 및 여행 도메인 만족도 검증 중..."):
+                with st.spinner("출발시각 및 숙소 배치 적절성 검증 중..."):
                     eval_result = evaluator.evaluate(user_info, current_itinerary, turn=turn, previous_score=running_score)
                 
                 eval_score = eval_result.get("score", running_score + 7)
@@ -494,17 +507,17 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
 
     with col_left:
         st.subheader(f"🏆 최종 검증된 [{selected_region}] ({travel_duration}) 맞춤형 여행 코스")
-        st.info(f"🚩 **출발 위치:** {user_info['start_location']} | 🎯 **최종 만족도 점수:** {running_score} / 100점")
+        st.info(f"🚩 **출발 위치/시각:** {user_info['start_location']} ({user_info['departure_time']} 출발) | 🎯 **최종 만족도 점수:** {running_score} / 100점")
         st.markdown(current_itinerary)
 
     with col_right:
-        st.subheader("📍 코스 동선 순 연동 명소 & 실제 주소")
-        st.caption("※ 추천 코스 작성 순서(Day 1 ➔ Day 2 ➔ Day 3)와 동일하게 카드 순서가 일치됩니다.")
+        st.subheader("📍 코스 동선 순 연동 명소 & 숙소 카드")
+        st.caption("※ 추천 코스 타임라인 순서(명소 ➔ 카페 ➔ 숙소 등)와 동일하게 카드가 정렬됩니다.")
         
         for idx, place in enumerate(sorted_real_places):
             with st.container(border=True):
                 st.markdown(f"#### {idx+1}. {place['title']}")
-                st.markdown(f"🏷️ **분류:** `{place.get('category', '추천 명소')}`")
+                st.markdown(f"🏷️ **분류:** `{place.get('category', '추천 장소')}`")
                 st.markdown(f"📍 **실제 주소:** `{place['addr']}`")
                 st.caption(f"📞 {place['tel']}")
                 st.markdown(f"[🔗 카카오맵에서 위치 및 길찾기]({place['url']})")
