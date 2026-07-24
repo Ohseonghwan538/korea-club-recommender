@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("🤖 사용자 맞춤 에이전틱 한국 여행 코스 플래너")
-st.caption("유저 취향 입력 분석 X 유사 페르소나 비교 X 실시간 카카오 지도 동선 동기화")
+st.caption("유저 취향 입력 분석 X 유사 페르소나 비교 X 출발지/이동시간 고려 X 실시간 카카오 지도 동선 동기화")
 
 # ==========================================
 # 2. Secrets 환경변수 및 기본 정보
@@ -53,6 +53,7 @@ AREA_INFO = {
 st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
 SEED_DATA = {
+    "start_location": "서울역",
     "age": 32,
     "companion": "연인/배우자",
     "travel": "자연 경관 산책로, 여유로운 힐링 스팟, 로컬 골목길 탐방",
@@ -62,6 +63,7 @@ SEED_DATA = {
 }
 
 st.sidebar.subheader("1. 여행 기본 정보")
+start_location = st.sidebar.text_input("🚩 출발지 (시작 위치)", SEED_DATA["start_location"])
 selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=0)
 travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일"], index=1)
 user_age = st.sidebar.slider("연령대", 18, 70, SEED_DATA["age"])
@@ -89,24 +91,44 @@ if not GEMINI_API_KEY:
     st.sidebar.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다.")
 
 # ==========================================
-# 4. 데이터 로드 및 카카오 API 정확 매칭 연동
+# 4. 데이터 로드 (안전 예외 처리 강화) 및 카카오 API 연동
 # ==========================================
 @st.cache_data(show_spinner="인구 페르소나 데이터 베이스 구축 중...")
 def load_persona_data():
-    ds = load_dataset("nvidia/Nemotron-Personas-Korea", split="train[:1500]")
     records = []
-    for idx, item in enumerate(ds):
-        travel = item.get("travel", "")
-        culinary = item.get("culinary", "")
-        concise = item.get("concise", "")
+    try:
+        ds = load_dataset("nvidia/Nemotron-Personas-Korea", split="train[:1500]")
+        for idx, item in enumerate(ds):
+            # 빈 문자열 처리 및 대체 텍스트 할당
+            travel = item.get("travel") or item.get("travel_style") or "자연 경관 산책 및 로컬 탐방"
+            culinary = item.get("culinary") or item.get("food_preference") or "정갈한 로컬 향토 음식"
+            concise = item.get("concise") or item.get("summary") or "여유와 식도락을 즐기는 라이프스타일"
+            
+            travel_str = str(travel).strip() if str(travel).strip() else "자연 경관 산책 및 힐링 스팟"
+            culinary_str = str(culinary).strip() if str(culinary).strip() else "지역 대표 향토 음식 및 한식"
+            concise_str = str(concise).strip() if str(concise).strip() else "여유로운 휴식과 일상 탈출을 지향하는 라이프스타일"
+
+            records.append({
+                "id": f"persona_{idx}",
+                "age": item.get("age", 30),
+                "location": item.get("location", "전국"),
+                "travel": travel_str,
+                "culinary": culinary_str,
+                "summary": concise_str,
+                "matching_text": f"여행취향: {travel_str} | 미식: {culinary_str} | 라이프스타일: {concise_str}"
+            })
+    except Exception:
+        pass
+
+    if not records:
         records.append({
-            "id": f"persona_{idx}",
-            "age": item.get("age", 30),
-            "location": item.get("location", "전국"),
-            "travel": travel,
-            "culinary": culinary,
-            "summary": concise,
-            "matching_text": f"여행취향: {travel} | 미식: {culinary} | 라이프스타일: {concise}"
+            "id": "persona_fallback",
+            "age": 35,
+            "location": "서울특별시",
+            "travel": "자연 경관 산책로 및 로컬 골목 탐방",
+            "culinary": "지역 대표 향토 음식 및 정갈한 한식",
+            "summary": "여유로운 휴식과 식도락을 즐기는 라이프스타일",
+            "matching_text": "여행취향: 자연 산책 | 미식: 향토 음식 | 라이프스타일: 힐링"
         })
     return pd.DataFrame(records)
 
@@ -124,7 +146,6 @@ def get_persona_embeddings(_model, texts):
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
 def fetch_kakao_places(region_name, travel_style, culinary_style, total_size=8):
-    """유저의 스타일별 다중 키워드 검색을 수행하여 정확한 장소와 주소 매칭"""
     if not KAKAO_API_KEY:
         return get_fallback_places(region_name)
     
@@ -193,10 +214,10 @@ def get_fallback_places(region_name):
     return fallback_items
 
 # ==========================================
-# 5. 에이전트 클래스 정의 (Agentic Simulation)
+# 5. 에이전트 클래스 정의 (출발지/이동시간 로직 추가)
 # ==========================================
 class PlannerAgent:
-    """여행 기획 에이전트: 제공된 장소와 주소를 순서대로 사용하여 여유로운 일정 기획"""
+    """여행 기획 에이전트: 출발지 및 장소 간 이동시간을 엄격히 고려하여 일정 산출"""
     def __init__(self, model):
         self.model = model
 
@@ -210,7 +231,7 @@ class PlannerAgent:
             [사용자 성향 검증관의 피드백]
             {feedback}
             
-            위 피드백을 반영하여 일정을 더 여유롭고 완벽하게 개선하세요!
+            위 피드백을 반영하여 이동시간 및 일정을 더 여유롭고 명확하게 개선하세요!
             """
 
         places_text = "\n".join([
@@ -220,38 +241,41 @@ class PlannerAgent:
 
         prompt = f"""
         당신은 대한민국 맞춤형 여행 코스 플래너(Planner Agent)입니다.
-        아래 유저 정보와 [제공된 실제 카카오 장소 목록]만을 엄격히 사용하여 {user_info['duration']} 여유로운 일정을 작성하세요.
+        유저 정보와 [제공된 실제 카카오 장소 목록]을 사용하여 출발지 기준의 {user_info['duration']} 여유로운 일정을 작성하세요.
 
         [유저 기본 정보]
+        - 🚩 출발지 (시작 위치): {user_info['start_location']}
         - 희망 지역/일정: {user_info['region']} / {user_info['duration']}
         - 연령 / 동행인: {user_info['age']}세 / {user_info['companion']}
         - 여행 스타일: {user_info['interest_travel']}
         - 미식 선호: {user_info['interest_culinary']}
-        - 라이프스타일: {user_info['user_bio']}
+        - 라이프스타일: {user_bio}
 
         [제공된 실제 카카오 장소 목록]
         {places_text}
         {feedback_prompt}
 
-        ⚠️ [장소 및 주소 작성 규칙]
-        1. [제공된 실제 카카오 장소 목록]에 기재된 정확한 '장소명'을 언급하세요.
-        2. 장소 언급 시 명확하게 `[장소명](카카오맵 URL)` 및 `(주소: 실제주소)` 형태로 표기하세요.
-        3. 하루 일정은 과도하게 빡빡하지 않게 3~4개 이내로 여유롭게 배치하세요.
+        ⚠️ [장소, 주소 및 이동시간 필수 표기 규칙]
+        1. 출발지({user_info['start_location']})에서 첫 도착지까지의 대중교통/자차 예상 이동시간(예: 약 45분 소요)을 일정 첫머리에 안내하세요.
+        2. 각 장소 이동 단계마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하여 동선 흐름을 알기 쉽게 구성하세요.
+        3. [제공된 실제 카카오 장소 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 형태로 표기하세요.
+        4. 하루 일정은 이동시간을 고려하여 과도하게 빽빽하지 않게 3~4개 이내로 여유롭게 배치하세요.
         """
         response = self.model.generate_content(prompt)
         return response.text
 
 class EvaluatorAgent:
-    """사용자 성향 검증관: 유저가 입력한 조건에 부합하는지 평가"""
+    """사용자 성향 검증관: 출발지 및 이동시간/동선의 합리성을 종합 검증"""
     def __init__(self, model):
         self.model = model
 
     def evaluate(self, user_info, itinerary):
         prompt = f"""
-        당신은 유저 요구사항에 여행 코스가 부합하는지 평가하는 '사용자 성향 맞춤 검증관'입니다.
-        아래 유저 조건과 제안된 일정표를 비교하여 검증하세요.
+        당신은 유저 요구사항 및 동선 현실성을 평가하는 '사용자 성향 맞춤 검증관'입니다.
+        아래 유저 조건과 제안된 일정표(출발지 및 이동시간 포함)를 비교하여 엄격하게 검증하세요.
 
         [사용자가 입력한 요구 조건]
+        - 출발지: {user_info['start_location']}
         - 연령 / 동행인: {user_info['age']}세 / {user_info['companion']}
         - 여행 스타일: {user_info['interest_travel']}
         - 미식 선호: {user_info['interest_culinary']}
@@ -264,8 +288,8 @@ class EvaluatorAgent:
         ```json
         {{
             "score": 85,
-            "satisfaction": "유저의 휴식 및 미식 요구사항이 잘 반영된 부분 1~2문장",
-            "critique": "개선이 필요한 부분(동선 과밀, 휴식 시간 부족 등) 및 Planner에게 전달할 지적 1~2문장"
+            "satisfaction": "출발지에서의 이동시간 및 유저의 휴식/미식 선호도가 잘 구성된 부분 1~2문장",
+            "critique": "이동시간이 너무 길거나 동선이 꼬이는 경우 등의 개선 요구사항 1~2문장"
         }}
         ```
         """
@@ -279,9 +303,9 @@ class EvaluatorAgent:
             pass
             
         return {
-            "score": 80,
-            "satisfaction": "자연 경관을 둘러보며 정갈한 향토 음식을 즐길 수 있는 동선입니다.",
-            "critique": "식사 후 여유롭게 쉬어갈 수 있는 힐링 카페 시간을 배정해주세요."
+            "score": 82,
+            "satisfaction": f"출발지({user_info['start_location']})를 고려한 효율적인 이동 동선과 정갈한 향토 맛집이 잘 배정되었습니다.",
+            "critique": "장소 간 이동시간을 한눈에 파악할 수 있도록 이동시간 표기를 보완해 주세요."
         }
 
 # ==========================================
@@ -296,6 +320,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
     llm = genai.GenerativeModel("gemini-3.1-flash-lite")
 
     user_info = {
+        "start_location": start_location,
         "region": selected_region,
         "duration": travel_duration,
         "age": user_age,
@@ -318,23 +343,28 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
 
     st.success(f"🎉 유저 맞춤 분석 완료! (유사 페르소나 데이터 매칭 유사도: {top_match_score}%)")
 
-    # 2) [수정 1] 유저 입력 데이터 vs 유사 페르소나 비교 분석 UI
+    # 2) 유저 입력 데이터 vs 유사 페르소나 비교 분석 UI (비어있는 값 안전 처리 추가)
     with st.expander("👥 사용자 입력 데이터 VS 매칭된 유사 페르소나 비교 분석", expanded=True):
         col_u, col_p = st.columns(2)
         
         with col_u:
             st.markdown("### 👤 내가 입력한 여행 성향")
+            st.markdown(f"- **출발지:** `{user_info['start_location']}`")
             st.markdown(f"- **연령 / 동행:** `{user_info['age']}세` / `{user_info['companion']}`")
             st.markdown(f"- **여행 스타일:** {user_info['interest_travel']}")
             st.markdown(f"- **미식 선호:** {user_info['interest_culinary']}")
             st.markdown(f"- **라이프스타일:** {user_info['user_bio']}")
 
         with col_p:
+            p_travel = top_persona['travel'] if top_persona['travel'] else "자연 경관 산책 및 힐링 스팟"
+            p_culinary = top_persona['culinary'] if top_persona['culinary'] else "지역 대표 향토 음식 및 한식"
+            p_summary = top_persona['summary'] if top_persona['summary'] else "여유와 식도락을 즐기는 라이프스타일"
+
             st.markdown(f"### 🤝 AI가 매칭한 유사 페르소나 (유사도 {top_match_score}%)")
             st.markdown(f"- **페르소나 연령 / 거주:** `{top_persona['age']}세` / `{top_persona['location']}`")
-            st.markdown(f"- **유사 여행 취향:** {top_persona['travel']}")
-            st.markdown(f"- **유사 미식 취향:** {top_persona['culinary']}")
-            st.markdown(f"- **페르소나 요약:** {top_persona['summary']}")
+            st.markdown(f"- **유사 여행 취향:** {p_travel}")
+            st.markdown(f"- **유사 미식 취향:** {p_culinary}")
+            st.markdown(f"- **페르소나 요약:** {p_summary}")
 
     # 3) 실시간 카카오 장소 수집
     with st.spinner(f"3️⃣ [{selected_region}] 실시간 카카오 지도 장소 매칭 중..."):
@@ -360,16 +390,16 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             # Step A: Planner
             with col_plan:
                 st.markdown(f"**🤖 Planner Agent (Turn {turn})**")
-                with st.spinner("유저 성향 기반 일정표 작성 중..."):
+                with st.spinner("출발지 및 이동시간 고려 일정표 작성 중..."):
                     current_itinerary = planner.generate_itinerary(
                         user_info, real_places, feedback=last_feedback, previous_itinerary=current_itinerary
                     )
-                st.info("✅ 여행 일정표 기획 완료")
+                st.info("✅ 이동시간 반영 일정표 기획 완료")
             
             # Step B: Evaluator
             with col_eval:
                 st.markdown(f"**🕵️ 사용자 성향 검증관 (Turn {turn})**")
-                with st.spinner("유저 요구조건 대비 일정 검증 중..."):
+                with st.spinner("출발지 동선 및 이동시간 유효성 검증 중..."):
                     eval_result = evaluator.evaluate(user_info, current_itinerary)
                 
                 final_score = eval_result.get("score", 70)
@@ -388,22 +418,16 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             elif turn < max_iterations:
                 st.warning(f"⚠️ 목표 점수({target_score}점) 미달로 Planner Agent에게 개선 요구사항을 전달합니다.")
 
-    # ==========================================
-    # 5) [수정 2] 일정표 등장 순서 기준 카카오 명소 카드 자동 재정렬 (Sorting & Matching)
-    # ==========================================
+    # 5) 일정표 등장 순서 기준 카카오 명소 카드 자동 재정렬
     ordered_places = []
     for place in real_places:
-        # 일정표 텍스트 내에서 장소명이 나타나는 위치(index) 탐색
         pos = current_itinerary.find(place['title'])
         if pos == -1:
-            # 완벽히 매칭되지 않는 경우 단어의 첫 토큰으로 한번 더 탐색
             short_title = place['title'].split()[0] if len(place['title'].split()) > 0 else place['title']
             pos = current_itinerary.find(short_title)
         
-        # 일정표에 등장하지 않는 장소는 뒤쪽(99999)으로 배치
         ordered_places.append((pos if pos != -1 else 99999, place))
 
-    # 일정표 등장 순서(pos) 기준 오름차순 정렬
     ordered_places.sort(key=lambda x: x[0])
     sorted_real_places = [p for _, p in ordered_places]
 
@@ -412,7 +436,8 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
     col_left, col_right = st.columns([1.2, 1])
 
     with col_left:
-        st.subheader(f"🏆 최종 검증된 [{selected_region}] 사용자 맞춤 추천 코스")
+        st.subheader(f"🏆 최종 검증된 [{selected_region}] 출발지/이동시간 반영 코스")
+        st.info(f"🚩 **출발 위치:** {user_info['start_location']}")
         st.markdown(current_itinerary)
 
     with col_right:
