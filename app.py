@@ -67,7 +67,6 @@ SEED_DATA = {
 st.sidebar.subheader("1. 여행 기본 정보")
 start_location = st.sidebar.text_input("🚩 출발지 (시작 위치)", SEED_DATA["start_location"])
 
-# [기능 추가 1] 출발 시각 입력 기능
 departure_time = st.sidebar.time_input("⏰ 출발 시간", SEED_DATA["departure_time"])
 departure_time_str = departure_time.strftime("%H:%M")
 
@@ -185,7 +184,7 @@ def get_persona_embeddings(_model, texts):
 
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
-# [기능 추가 2] 카카오 지도 숙소 키워드 추가 수집
+# 카카오 지도 장소 수집 및 분류(Category) 파싱 보완
 def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duration="1박 2일"):
     if not KAKAO_API_KEY:
         return get_fallback_places(region_name)
@@ -205,7 +204,6 @@ def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duratio
         f"{region_name} 핫플레이스"
     ]
     
-    # 1박2일 이상이면 숙소 검색어 필수 추가
     if travel_duration in ["1박 2일", "2박 3일"]:
         queries.append(f"{region_name} 감성숙소")
         queries.append(f"{region_name} 호텔")
@@ -230,13 +228,24 @@ def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duratio
                     phone = doc.get("phone") or f"{AREA_INFO.get(region_name, {}).get('tel_prefix', '02')}-123-4567"
                     place_url = doc.get("place_url") or f"https://map.kakao.com/link/search/{urllib.parse.quote(addr)}"
                     
+                    # [수정 1] 분류(Category) 추출 로직 강화 (빈 값 처리 해결)
+                    cat_group = (doc.get("category_group_name") or "").strip()
+                    cat_full = (doc.get("category_name") or "").strip()
+                    
+                    if cat_group:
+                        category_val = cat_group
+                    elif cat_full:
+                        category_val = cat_full.split(">")[-1].strip()
+                    else:
+                        category_val = "추천 장소"
+                    
                     places.append({
                         "id": p_id,
                         "title": p_name,
                         "addr": addr,
                         "tel": phone,
                         "url": place_url,
-                        "category": doc.get("category_group_name", "추천 장소")
+                        "category": category_val
                     })
         except Exception:
             continue
@@ -267,7 +276,7 @@ def get_fallback_places(region_name):
 # 5. 여행 도메인 맞춤 에이전트 클래스
 # ==========================================
 class PlannerAgent:
-    """여행 기획 에이전트: 출발시각 기반 시간대별 타임라인 및 숙소 배치 지원"""
+    """여행 기획 에이전트: gemini-3.1-flash-lite 모델 적용"""
     def __init__(self, model):
         self.model = model
 
@@ -281,7 +290,7 @@ class PlannerAgent:
             [검증관의 지적 및 개선 요구사항]
             {feedback}
             
-            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 시간대별 스chedule, 숙소 배치, 식사/카페 흐름을 완벽하게 재정교화하세요!
+            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 시간대별 스케줄, 숙소 배치, 식사/카페 흐름을 완벽하게 재정교화하세요!
             """
 
         places_text = "\n".join([
@@ -307,7 +316,7 @@ class PlannerAgent:
         {feedback_prompt}
 
         ⚠️ [일정 기획 및 시간 작성 규칙]
-        1. **시간대별 타임라인 필수**: 유저의 출발 시각({user_info['departure_time']})에서 시작하여 각 장소 방문 시간을 `HH:MM ~ HH:MM` 형식으로 명시하세요. (예: `{user_info['departure_time']} ~ 10:15 출발지에서 이동 및 도착`)
+        1. **시간대별 타임라인 필수**: 유저의 출발 시각({user_info['departure_time']})에서 시작하여 각 장소 방문 시간을 `HH:MM ~ HH:MM` 형식으로 명시하세요.
         2. **이동시간 표기**: 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하세요.
         3. **숙소 추천 규칙**: 여행 일정이 당일치기가 아닌 경우 (1박 2일 또는 2박 3일), 각 일차(Day 1, Day 2)의 **마지막 일정으로 [제공된 목록]에 있는 숙소를 추천**하여 체크인 일정을 포함하세요.
         4. **마크다운 구문**: [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
@@ -316,7 +325,7 @@ class PlannerAgent:
         return response.text
 
 class EvaluatorAgent:
-    """여행 도메인 검증관: 출발시각 및 숙소 배치 정밀 검증"""
+    """여행 도메인 검증관: gemini-3.1-flash-lite 모델 적용"""
     def __init__(self, model):
         self.model = model
 
@@ -339,7 +348,7 @@ class EvaluatorAgent:
         {itinerary}
 
         ⚠️ [여행 하네스 평가 및 점수 산정 규칙]
-        1. **출발 시각 반영 여부**: 일정의 시작이 유저 출발 시각({user_info['departure_time']})과 부합하는지, 시각별 타임라인이 적절한지 점검하세요.
+        1. **출발 시각 반영 여부**: 일정의 시작이 유저 출발 시각({user_info['departure_time']})과 부합하는지 점검하세요.
         2. **숙소 배치 점검**: 1박2일/2박3일인 경우 적절한 숙소 추천 및 체크인 일정이 반영되어 있는지 평가하세요.
         3. Turn 1은 소요시간 부족이나 숙소 체크인 시각 미흡 등을 지적하며 보통 70~78점대로 평가하세요.
         4. Turn 2 이상부터 지적사항이 반영되었다면 이전 점수({previous_score}점)보다 상승된 점수(+6점 ~ +14점)를 부여하세요.
@@ -378,8 +387,6 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         st.stop()
         
     genai.configure(api_key=GEMINI_API_KEY)
-    
-    # Gemini 3.1 Flash Lite 모델 사용
     llm = genai.GenerativeModel("gemini-3.1-flash-lite")
 
     user_info = {
@@ -488,18 +495,25 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             elif turn < max_iterations:
                 st.warning(f"⚠️ 목표 점수({target_score}점) 미달로 Planner Agent에게 개선 지침을 전달합니다.")
 
-    # 5) 일정표 등장 순서 기준 카카오 명소 카드 자동 재정렬
-    ordered_places = []
+    # [수정 2] 5) 코스에 '실제 반영된 메인 장소'와 '대안/추가 장소'를 정밀하게 분리
+    main_places = []
+    alt_places = []
+
     for place in real_places:
         pos = current_itinerary.find(place['title'])
         if pos == -1:
             short_title = place['title'].split()[0] if len(place['title'].split()) > 0 else place['title']
-            pos = current_itinerary.find(short_title)
+            if len(short_title) >= 2:
+                pos = current_itinerary.find(short_title)
         
-        ordered_places.append((pos if pos != -1 else 99999, place))
+        if pos != -1:
+            main_places.append((pos, place))
+        else:
+            alt_places.append(place)
 
-    ordered_places.sort(key=lambda x: x[0])
-    sorted_real_places = [p for _, p in ordered_places]
+    # 코스 등장 순서 정렬
+    main_places.sort(key=lambda x: x[0])
+    sorted_main_places = [p for _, p in main_places]
 
     # 6) 최종 결과 출력 화면
     st.markdown("---")
@@ -510,14 +524,33 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         st.info(f"🚩 **출발 위치/시각:** {user_info['start_location']} ({user_info['departure_time']} 출발) | 🎯 **최종 만족도 점수:** {running_score} / 100점")
         st.markdown(current_itinerary)
 
+    # [수정 2] 오른쪽 카드 영역: 메인 코스 장소와 대안/숙소 장소를 명확히 분리하여 렌더링
     with col_right:
-        st.subheader("📍 코스 동선 순 연동 명소 & 숙소 카드")
-        st.caption("※ 추천 코스 타임라인 순서(명소 ➔ 카페 ➔ 숙소 등)와 동일하게 카드가 정렬됩니다.")
+        st.subheader("📍 연동 명소 & 숙소 정보")
         
-        for idx, place in enumerate(sorted_real_places):
-            with st.container(border=True):
-                st.markdown(f"#### {idx+1}. {place['title']}")
-                st.markdown(f"🏷️ **분류:** `{place.get('category', '추천 장소')}`")
-                st.markdown(f"📍 **실제 주소:** `{place['addr']}`")
-                st.caption(f"📞 {place['tel']}")
-                st.markdown(f"[🔗 카카오맵에서 위치 및 길찾기]({place['url']})")
+        st.markdown("#### 1️⃣ 추천 코스에 포함된 명소 & 숙소")
+        st.caption("※ 여행 코스 타임라인 순서(Day 1 ➔ Day 2)에 따라 배치되었습니다.")
+        
+        if sorted_main_places:
+            for idx, place in enumerate(sorted_main_places):
+                with st.container(border=True):
+                    st.markdown(f"##### {idx+1}. {place['title']}")
+                    st.markdown(f"🏷️ **분류:** `{place['category']}`")
+                    st.markdown(f"📍 **실제 주소:** `{place['addr']}`")
+                    st.caption(f"📞 {place['tel']}")
+                    st.markdown(f"[🔗 카카오맵에서 위치 및 길찾기]({place['url']})")
+        else:
+            st.info("코스에 포함된 주요 장소를 정밀 매칭하는 중입니다.")
+
+        # 코스 외 대안 장소 및 숙소가 존재하는 경우 구분창(Expander)으로 표기
+        if alt_places:
+            st.markdown("---")
+            with st.expander("💡 **[대안 옵션] 코스 외 추가 추천 장소 & 숙소**", expanded=True):
+                st.caption("※ 일정표에 직접 포함되지는 않았으나, 여정 변경 시 활용할 수 있는 대안 명소 및 추가 숙소입니다.")
+                for idx, place in enumerate(alt_places):
+                    with st.container(border=True):
+                        st.markdown(f"##### 💡 [대안/추가] {place['title']}")
+                        st.markdown(f"🏷️ **분류:** `{place['category']}`")
+                        st.markdown(f"📍 **실제 주소:** `{place['addr']}`")
+                        st.caption(f"📞 {place['tel']}")
+                        st.markdown(f"[🔗 카카오맵에서 위치 및 길찾기]({place['url']})")
