@@ -20,7 +20,7 @@ st.set_page_config(
 )
 
 st.title("🤖 사용자 맞춤 에이전틱 한국 여행 코스 플래너")
-st.caption("유저 취향 입력 분석 X 동적 유사 페르소나 비교 X 출발시각/숙소/동선 고려 X 점진적 하네스 시뮬레이션")
+st.caption("유저 취향 입력 분석 X 동적 유사 페르소나 비교 X 출발시각/영업시간/숙소 고려 X 점진적 하네스 시뮬레이션")
 
 # ==========================================
 # 2. Secrets 환경변수 및 기본 정보
@@ -228,7 +228,6 @@ def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duratio
                     phone = doc.get("phone") or f"{AREA_INFO.get(region_name, {}).get('tel_prefix', '02')}-123-4567"
                     place_url = doc.get("place_url") or f"https://map.kakao.com/link/search/{urllib.parse.quote(addr)}"
                     
-                    # [수정 1] 분류(Category) 추출 로직 강화 (빈 값 처리 해결)
                     cat_group = (doc.get("category_group_name") or "").strip()
                     cat_full = (doc.get("category_name") or "").strip()
                     
@@ -276,7 +275,7 @@ def get_fallback_places(region_name):
 # 5. 여행 도메인 맞춤 에이전트 클래스
 # ==========================================
 class PlannerAgent:
-    """여행 기획 에이전트: gemini-3.1-flash-lite 모델 적용"""
+    """여행 기획 에이전트: 실제 영업시간(클럽/나이트라이프 등 심야업종 고려) 및 타임라인 정밀 생성"""
     def __init__(self, model):
         self.model = model
 
@@ -290,7 +289,7 @@ class PlannerAgent:
             [검증관의 지적 및 개선 요구사항]
             {feedback}
             
-            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 시간대별 스케줄, 숙소 배치, 식사/카페 흐름을 완벽하게 재정교화하세요!
+            ⚠️ 위 검증관 피드백을 100% 반영하여 영업시간, 이동 동선, 시간대별 스케줄, 숙소 배치를 완벽하게 재정교화하세요!
             """
 
         places_text = "\n".join([
@@ -315,23 +314,27 @@ class PlannerAgent:
         {places_text}
         {feedback_prompt}
 
-        ⚠️ [일정 기획 및 시간 작성 규칙]
-        1. **시간대별 타임라인 필수**: 유저의 출발 시각({user_info['departure_time']})에서 시작하여 각 장소 방문 시간을 `HH:MM ~ HH:MM` 형식으로 명시하세요.
-        2. **이동시간 표기**: 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하세요.
-        3. **숙소 추천 규칙**: 여행 일정이 당일치기가 아닌 경우 (1박 2일 또는 2박 3일), 각 일차(Day 1, Day 2)의 **마지막 일정으로 [제공된 목록]에 있는 숙소를 추천**하여 체크인 일정을 포함하세요.
-        4. **마크다운 구문**: [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
+        ⚠️ [일정 기획 및 영업시간 고려 필수 규칙]
+        1. **업종별 실제 영업시간 엄격 반영**:
+           - **댄스클럽, 나이트라이프, 라운지바, 클럽 등**: 실제 오픈 시각이 늦은 밤(예: 22:00 ~ 23:00 이후)입니다. 절대로 저녁 일찍(18:00~21:00) 배치하지 마시고, **밤 23:00 이후 또는 심야 시간대**에 방문하도록 일정을 구성하세요.
+           - **식당/다이닝**: 점심(11:30~14:00) 및 저녁(17:30~20:30) 식사 시간대에 배치하세요.
+           - **카페/갤러리/팝업스토어/박물관**: 주간 및 오후 시간대(10:00~20:00)에 배치하세요.
+        2. **시간대별 타임라인 필수**: 유저 출발 시각({user_info['departure_time']})에서 시작하여 각 장소 방문 시간을 `HH:MM ~ HH:MM` 형식으로 명시하세요.
+        3. **이동시간 및 동선 표기**: 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 명시하세요.
+        4. **숙소 추천 및 체크인**: 1박 2일/2박 3일 일정일 경우, 저녁 식사 후 또는 나이트라이프 방문 전후로 숙소 체크인 및 휴식 동선을 자연스럽게 연결하세요.
+        5. **마크다운 구문**: [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
         """
         response = self.model.generate_content(prompt)
         return response.text
 
 class EvaluatorAgent:
-    """여행 도메인 검증관: gemini-3.1-flash-lite 모델 적용"""
+    """여행 도메인 검증관: 출발시각, 업종별 영업시간, 숙소 동선 통합 검증"""
     def __init__(self, model):
         self.model = model
 
     def evaluate(self, user_info, itinerary, turn=1, previous_score=72):
         prompt = f"""
-        당신은 여행 도메인 에이전트 하네스의 '사용자 맞춤성 및 동선 검증관'입니다.
+        당신은 여행 도메인 에이전트 하네스의 '사용자 맞춤성, 영업시간 및 동선 검증관'입니다.
         현재 회차: Turn {turn} (이전 회차 점수: {previous_score}점)
 
         아래 유저 요구조건과 제안된 여행 일정표({user_info['duration']})를 엄격하게 평가하세요.
@@ -347,18 +350,20 @@ class EvaluatorAgent:
         [검증 대상 여행 코스]
         {itinerary}
 
-        ⚠️ [여행 하네스 평가 및 점수 산정 규칙]
-        1. **출발 시각 반영 여부**: 일정의 시작이 유저 출발 시각({user_info['departure_time']})과 부합하는지 점검하세요.
-        2. **숙소 배치 점검**: 1박2일/2박3일인 경우 적절한 숙소 추천 및 체크인 일정이 반영되어 있는지 평가하세요.
-        3. Turn 1은 소요시간 부족이나 숙소 체크인 시각 미흡 등을 지적하며 보통 70~78점대로 평가하세요.
-        4. Turn 2 이상부터 지적사항이 반영되었다면 이전 점수({previous_score}점)보다 상승된 점수(+6점 ~ +14점)를 부여하세요.
+        ⚠️ [여행 하네스 엄격 평가 및 점수 산정 규칙]
+        1. **업종별 실제 영업시간 적절성 (매우 중요)**:
+           - 댄스클럽, 클럽, 라운지 등 나이트라이프 업종이 23:00 이전(예: 저녁 6시~9시)에 배치되어 있다면 **영업시간 미준수로 감점(-10점)**하고, 23:00 이후 심야에 재배치하도록 지적하세요.
+           - 카페나 미술관이 너무 늦은 밤에 배치되어 있다면 수정 지적하세요.
+        2. **출발 시각 반영 여부**: 일정의 시작이 유저 출발 시각({user_info['departure_time']})과 부합하는지 점검하세요.
+        3. **숙소 배치 점검**: 1박2일/2박3일인 경우 적절한 숙소 추천 및 체크인/숙박 동선이 포함되었는지 평가하세요.
+        4. Turn 2 이상에서 영업시간 오류 등이 지적 및 해결되었다면 이전 점수({previous_score}점)보다 상승된 점수를 부여하세요.
 
         [응답 형식 - 반드시 아래 JSON 형식으로만 답변하세요]
         ```json
         {{
             "score": 85,
-            "satisfaction": "{user_info['departure_time']} 출발 시각 기준의 타임라인 동선과 숙소 배치가 개선된 이유 1~2문장",
-            "critique": "다음 Turn에서 더욱 완벽해지기 위해 보완할 여행 팁 1문장 (점수가 목표치 이상이면 '추가 보완 없이 최고 수준입니다' 표기)"
+            "satisfaction": "{user_info['departure_time']} 출발 시각 기준의 타임라인 및 업종별 실제 영업시간(클럽/나이트라이프 심야 배치 등) 반영이 개선된 이유 1~2문장",
+            "critique": "다음 Turn에서 영업시간이나 동선을 더욱 완벽히 보완하기 위한 지적 1문장 (점수가 목표치 이상이면 '추가 보완 없이 최고 수준입니다' 표기)"
         }}
         ```
         """
@@ -374,8 +379,8 @@ class EvaluatorAgent:
         calc_score = min(95, previous_score + 8 if turn > 1 else 75)
         return {
             "score": calc_score,
-            "satisfaction": f"Turn {turn}: {user_info['departure_time']} 출발 시각 및 {user_info['duration']} 일정/숙소 추천 동선이 개선되었습니다.",
-            "critique": "장소 간 이동시간 및 체류 시간을 10분만 더 넉넉히 배정하면 완성도가 높아집니다."
+            "satisfaction": f"Turn {turn}: {user_info['departure_time']} 출발 시각 및 업종별 영업시간(심야 장소 구분) 반영이 개선되었습니다.",
+            "critique": "장소 간 이동시간 및 심야 업종 운영 시작 시각을 다시 한번 점검하세요."
         }
 
 # ==========================================
@@ -462,7 +467,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             # Step A: Planner
             with col_plan:
                 st.markdown(f"**🤖 Planner Agent (Turn {turn})**")
-                with st.spinner("출발시각 및 숙소 배치 고려 타임라인 작성 중..."):
+                with st.spinner("영업시간 및 타임라인 고려 일정표 기획 중..."):
                     current_itinerary = planner.generate_itinerary(
                         user_info, real_places, turn=turn, feedback=last_feedback, previous_itinerary=current_itinerary
                     )
@@ -471,7 +476,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             # Step B: Evaluator
             with col_eval:
                 st.markdown(f"**🕵️ 사용자 성향 검증관 (Turn {turn})**")
-                with st.spinner("출발시각 및 숙소 배치 적절성 검증 중..."):
+                with st.spinner("영업시간 및 출발시각 검증 중..."):
                     eval_result = evaluator.evaluate(user_info, current_itinerary, turn=turn, previous_score=running_score)
                 
                 eval_score = eval_result.get("score", running_score + 7)
@@ -495,7 +500,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             elif turn < max_iterations:
                 st.warning(f"⚠️ 목표 점수({target_score}점) 미달로 Planner Agent에게 개선 지침을 전달합니다.")
 
-    # [수정 2] 5) 코스에 '실제 반영된 메인 장소'와 '대안/추가 장소'를 정밀하게 분리
+    # 5) 코스에 '실제 반영된 메인 장소'와 '대안/추가 장소'를 정밀하게 분리
     main_places = []
     alt_places = []
 
@@ -511,7 +516,6 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         else:
             alt_places.append(place)
 
-    # 코스 등장 순서 정렬
     main_places.sort(key=lambda x: x[0])
     sorted_main_places = [p for _, p in main_places]
 
@@ -524,7 +528,6 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         st.info(f"🚩 **출발 위치/시각:** {user_info['start_location']} ({user_info['departure_time']} 출발) | 🎯 **최종 만족도 점수:** {running_score} / 100점")
         st.markdown(current_itinerary)
 
-    # [수정 2] 오른쪽 카드 영역: 메인 코스 장소와 대안/숙소 장소를 명확히 분리하여 렌더링
     with col_right:
         st.subheader("📍 연동 명소 & 숙소 정보")
         
@@ -542,7 +545,6 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         else:
             st.info("코스에 포함된 주요 장소를 정밀 매칭하는 중입니다.")
 
-        # 코스 외 대안 장소 및 숙소가 존재하는 경우 구분창(Expander)으로 표기
         if alt_places:
             st.markdown("---")
             with st.expander("💡 **[대안 옵션] 코스 외 추가 추천 장소 & 숙소**", expanded=True):
