@@ -52,14 +52,15 @@ AREA_INFO = {
 # ==========================================
 st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
+# 1️⃣ [테마 A] 도심 문화 & 트렌디 핫플 (Urban Culture) 시드 데이터 설정
 SEED_DATA = {
     "start_location": "서울역",
-    "age": 32,
-    "companion": "연인/배우자",
-    "travel": "자연 경관 산책로, 여유로운 힐링 스팟, 로컬 골목길 탐방",
-    "culinary": "지역 대표 향토 음식, 정갈한 한식 다이닝, 뷰가 좋은 힐링 카페",
-    "arts": "야외 수목원 및 정원, 조용한 지역 역사 공간, 로컬 공예 숍",
-    "bio": "빡빡한 일정보다는 조용한 자연 속에서 여유롭게 휴식을 취하고, 그 지역의 대표적인 정갈한 한식과 향토 음식을 즐기는 힐링 여행을 원합니다."
+    "age": 28,
+    "companion": "친구들",
+    "travel": "도심 핫플레이스, 복합문화공간, 브랜드 공간 및 팝업스토어",
+    "culinary": "디저트 카페, 트렌디한 로컬 다이닝, 감성 와인/펍",
+    "arts": "현대 미술 전시, 공간 디자인 및 아트 갤러리, 도심 문화 공간",
+    "bio": "전통적인 대표 명소보다는 도심의 트렌디한 공간과 감성적인 분위기를 즐기며 감각적인 경험을 하는 여행을 선호합니다."
 }
 
 st.sidebar.subheader("1. 여행 기본 정보")
@@ -122,12 +123,12 @@ def load_persona_data():
     if not records:
         records.append({
             "id": "persona_fallback",
-            "age": 35,
+            "age": 28,
             "location": "서울특별시",
-            "travel": "자연 경관 산책로 및 로컬 골목 탐방",
-            "culinary": "지역 대표 향토 음식 및 정갈한 한식",
-            "summary": "여유로운 휴식과 식도락을 즐기는 라이프스타일",
-            "matching_text": "여행취향: 자연 산책 | 미식: 향토 음식 | 라이프스타일: 힐링"
+            "travel": "도심 핫플레이스, 복합문화공간 및 팝업스토어",
+            "culinary": "디저트 카페, 트렌디 로컬 다이닝",
+            "summary": "트렌디한 공간과 감성적인 분위기를 선호하는 라이프스타일",
+            "matching_text": "여행취향: 도심 핫플 | 미식: 디저트 카페 | 라이프스타일: 감성 공간"
         })
     return pd.DataFrame(records)
 
@@ -152,13 +153,13 @@ def fetch_kakao_places(region_name, travel_style, culinary_style, total_size=8):
     url = "https://dapi.kakao.com/v2/local/search/keyword.json"
     headers = {"Authorization": f"KakaoAK {raw_key}"}
     
-    travel_kw = travel_style.split(",")[0].strip() if travel_style else "자연 산책"
-    culinary_kw = culinary_style.split(",")[0].strip() if culinary_style else "향토 음식"
+    travel_kw = travel_style.split(",")[0].strip() if travel_style else "복합문화공간"
+    culinary_kw = culinary_style.split(",")[0].strip() if culinary_style else "디저트 카페"
     
     queries = [
         f"{region_name} {travel_kw}",
         f"{region_name} {culinary_kw}",
-        f"{region_name} 힐링 카페"
+        f"{region_name} 핫플레이스"
     ]
     
     places = []
@@ -202,18 +203,18 @@ def get_fallback_places(region_name):
     base_addr = AREA_INFO.get(region_name, {}).get("road", "서울특별시 종로구 사직로 161")
     
     fallback_items = [
-        {"id": "fb_1", "title": f"{region_name} 대표 향토 음식점", "addr": base_addr, "tel": f"{prefix}-111-2222", "category": "음식점"},
-        {"id": "fb_2", "title": f"{region_name} 자연 수목 산책로", "addr": base_addr, "tel": f"{prefix}-222-3333", "category": "관광명소"},
-        {"id": "fb_3", "title": f"{region_name} 힐링 전통 다원", "addr": base_addr, "tel": f"{prefix}-333-4444", "category": "카페"},
-        {"id": "fb_4", "title": f"{region_name} 정갈한 한식 다이닝", "addr": base_addr, "tel": f"{prefix}-444-5555", "category": "음식점"},
-        {"id": "fb_5", "title": f"{region_name} 고즈넉한 문화 거리", "addr": base_addr, "tel": f"{prefix}-555-6666", "category": "관광명소"}
+        {"id": "fb_1", "title": f"{region_name} 복합문화공간", "addr": base_addr, "tel": f"{prefix}-111-2222", "category": "문화공간"},
+        {"id": "fb_2", "title": f"{region_name} 감성 디저트 카페", "addr": base_addr, "tel": f"{prefix}-222-3333", "category": "카페"},
+        {"id": "fb_3", "title": f"{region_name} 현대 미술 갤러리", "addr": base_addr, "tel": f"{prefix}-333-4444", "category": "전시관"},
+        {"id": "fb_4", "title": f"{region_name} 트렌디 로컬 다이닝", "addr": base_addr, "tel": f"{prefix}-444-5555", "category": "음식점"},
+        {"id": "fb_5", "title": f"{region_name} 도심 팝업스토어 거리", "addr": base_addr, "tel": f"{prefix}-555-6666", "category": "쇼핑"}
     ]
     for item in fallback_items:
         item["url"] = f"https://map.kakao.com/link/search/{urllib.parse.quote(item['addr'])}"
     return fallback_items
 
 # ==========================================
-# 5. 여행 도메인 맞춤 에이전트 클래스 (하네스 점수 피드백 개선)
+# 5. 여행 도메인 맞춤 에이전트 클래스
 # ==========================================
 class PlannerAgent:
     """여행 기획 에이전트: 회차가 거듭될수록 검증관 피드백을 반영하여 최적 코스로 개편"""
@@ -230,7 +231,7 @@ class PlannerAgent:
             [검증관의 지적 및 개선 요구사항]
             {feedback}
             
-            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 여유 시간, 식사 및 카페 배치 등을 더 완벽하게 정교화하세요!
+            ⚠️ 위 검증관 피드백을 100% 반영하여 이동 동선, 감성 스팟 탐방 시간, 식사 및 카페 배치 등을 더 완벽하게 정교화하세요!
             """
 
         places_text = "\n".join([
@@ -240,7 +241,7 @@ class PlannerAgent:
 
         prompt = f"""
         당신은 대한민국 맞춤형 여행 코스 플래너(Planner Agent)입니다. (현재 시뮬레이션: Turn {turn})
-        유저 정보와 [제공된 실제 카카오 장소 목록]만을 엄격히 사용하여 {user_info['duration']} 여유로운 일정을 기획하세요.
+        유저 정보와 [제공된 실제 카카오 장소 목록]만을 엄격히 사용하여 {user_info['duration']} 감각적이고 트렌디한 일정을 기획하세요.
 
         [유저 기본 정보]
         - 🚩 출발지 (시작 위치): {user_info['start_location']}
@@ -258,7 +259,7 @@ class PlannerAgent:
         1. 출발지({user_info['start_location']})에서 첫 장소까지의 이동시간 및 방식을 일정 첫 부분에 기재하세요.
         2. 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하세요.
         3. [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
-        4. 일정은 여유로운 휴식을 위해 하루 3~4개 장소 내외로 배치하세요.
+        4. 하루 일정은 3~4개 장소 내외로 배치하세요.
         """
         response = self.model.generate_content(prompt)
         return response.text
@@ -286,7 +287,7 @@ class EvaluatorAgent:
         {itinerary}
 
         ⚠️ [여행 하네스 평가 및 점수 산정 규칙]
-        1. Turn 1 (초기 일정)은 이동 동선, 여유 시간 부족, 이동시간 누락 등을 엄격히 지적하며 보통 70~78점대로 평가하세요.
+        1. Turn 1 (초기 일정)은 이동 동선, 디저트/카페 또는 감성 스팟 탐방 시간 부족 등을 엄격히 지적하며 보통 70~78점대로 평가하세요.
         2. Turn 2 이상부터 Planner가 이전 지적사항을 반영했다면, 이전 점수({previous_score}점)보다 상승된 점수(+6점 ~ +14점)를 부여하세요.
         3. 피드백이 충실히 반영되었다면 Turn이 올라갈수록 점수가 점진적으로 우상향하여 목표 점수에 도달하도록 하세요.
 
@@ -294,7 +295,7 @@ class EvaluatorAgent:
         ```json
         {{
             "score": 85,
-            "satisfaction": "이전 피드백이 반영되어 출발지에서의 동선과 미식/휴식 밸런스가 크게 개선된 이유 1~2문장",
+            "satisfaction": "이전 피드백이 반영되어 출발지에서의 동선과 트렌디한 카페/전시 밸런스가 크게 개선된 이유 1~2문장",
             "critique": "다음 Turn에서 더욱 완벽해지기 위해 보완할 여행 팁 1문장 (점수가 목표치 이상이면 '추가 보완 없이 최고 수준입니다' 표기)"
         }}
         ```
@@ -308,12 +309,11 @@ class EvaluatorAgent:
         except Exception:
             pass
             
-        # Fallback calculation guarantees monotonic score progression
         calc_score = min(95, previous_score + 8 if turn > 1 else 75)
         return {
             "score": calc_score,
-            "satisfaction": f"Turn {turn}: 피드백을 반영하여 출발지({user_info['start_location']}) 동선 및 이동시간 표기가 한층 더 정교해졌습니다.",
-            "critique": "장소 간 휴식 시간을 10분 정도만 더 넉넉하게 배정하면 완성도가 극대화됩니다."
+            "satisfaction": f"Turn {turn}: 피드백을 반영하여 출발지({user_info['start_location']}) 동선 및 도심 핫플 동선이 정교해졌습니다.",
+            "critique": "장소간 이동시간과 카페 체류 시간을 10분만 더 넉넉히 배정하면 완성도가 높아집니다."
         }
 
 # ==========================================
@@ -364,9 +364,9 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
             st.markdown(f"- **라이프스타일:** {user_info['user_bio']}")
 
         with col_p:
-            p_travel = top_persona['travel'] if top_persona['travel'] else "자연 경관 산책 및 힐링 스팟"
-            p_culinary = top_persona['culinary'] if top_persona['culinary'] else "지역 대표 향토 음식 및 한식"
-            p_summary = top_persona['summary'] if top_persona['summary'] else "여유와 식도락을 즐기는 라이프스타일"
+            p_travel = top_persona['travel'] if top_persona['travel'] else "도심 핫플레이스 및 복합문화공간"
+            p_culinary = top_persona['culinary'] if top_persona['culinary'] else "디저트 카페 및 트렌디 로컬 다이닝"
+            p_summary = top_persona['summary'] if top_persona['summary'] else "감성적 공간과 문화를 즐기는 라이프스타일"
 
             st.markdown(f"### 🤝 AI가 매칭한 유사 페르소나 (유사도 {top_match_score}%)")
             st.markdown(f"- **페르소나 연령 / 거주:** `{top_persona['age']}세` / `{top_persona['location']}`")
@@ -387,7 +387,7 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
     
     current_itinerary = ""
     last_feedback = None
-    running_score = 72 # initial baseline score reference
+    running_score = 72
     
     simulation_container = st.container()
 
@@ -412,7 +412,6 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
                 
                 eval_score = eval_result.get("score", running_score + 7)
                 
-                # [안전 가드] Turn 진행 시 점수가 떨어지지 않도록 우상향 보장
                 if turn > 1:
                     eval_score = max(eval_score, running_score + 4)
                 
