@@ -19,7 +19,7 @@ st.set_page_config(
 )
 
 st.title("🤖 사용자 맞춤 에이전틱 한국 여행 코스 플래너")
-st.caption("유저 취향 입력 분석 X 유사 페르소나 비교 X 출발지/이동시간 고려 X 점진적 하네스 시뮬레이션")
+st.caption("유저 취향 입력 분석 X 동적 유사 페르소나 비교 X 출발지/이동시간 고려 X 점진적 하네스 시뮬레이션")
 
 # ==========================================
 # 2. Secrets 환경변수 및 기본 정보
@@ -36,7 +36,7 @@ AREA_INFO = {
     "부산광역시": {"road": "부산광역시 해운대구 해운대해변로 264", "tel_prefix": "051"},
     "울산광역시": {"road": "울산광역시 남구 대학로 93", "tel_prefix": "052"},
     "세종특별자치시": {"road": "세종특별자치시 도움6로 11", "tel_prefix": "044"},
-    "경기도": {"road": "경기도 수원시 팔달구 효원로 1", "tel_prefix": "031"},
+    "경기도": {"road": "경기도 수원시 수원시 팔달구 효원로 1", "tel_prefix": "031"},
     "강원특별자치도": {"road": "강원특별자치도 강릉시 창해로 307", "tel_prefix": "033"},
     "충청북도": {"road": "충청북도 청주시 상당구 상당로 82", "tel_prefix": "043"},
     "충청남도": {"road": "충청남도 공주시 금벽로 368", "tel_prefix": "041"},
@@ -52,7 +52,6 @@ AREA_INFO = {
 # ==========================================
 st.sidebar.header("⚙️ 유저 여행 성향 설정")
 
-# 1️⃣ [테마 A] 도심 문화 & 트렌디 핫플 (Urban Culture) 시드 데이터 설정
 SEED_DATA = {
     "start_location": "서울역",
     "age": 28,
@@ -66,11 +65,14 @@ SEED_DATA = {
 st.sidebar.subheader("1. 여행 기본 정보")
 start_location = st.sidebar.text_input("🚩 출발지 (시작 위치)", SEED_DATA["start_location"])
 selected_region = st.sidebar.selectbox("여행 희망 지역", list(AREA_INFO.keys()), index=0)
-travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일"], index=1)
+
+# [수정 2] "2박 3일" 일정 요소 추가
+travel_duration = st.sidebar.radio("여행 일정", ["당일치기", "1박 2일", "2박 3일"], index=1)
+
 user_age = st.sidebar.slider("연령대", 18, 70, SEED_DATA["age"])
 
 companion_options = ["혼자", "연인/배우자", "친구들", "가족/아이와 함께", "부모님과 함께"]
-companion_idx = companion_options.index(SEED_DATA["companion"]) if SEED_DATA["companion"] in companion_options else 0
+companion_idx = companion_options.index(SEED_DATA["companion"]) if SEED_DATA["companion"] in companion_options else 2
 companion = st.sidebar.selectbox("동행인", companion_options, index=companion_idx)
 
 st.sidebar.subheader("2. 세부 취향 (관심사)")
@@ -92,7 +94,7 @@ if not GEMINI_API_KEY:
     st.sidebar.error("⚠️ GEMINI_API_KEY가 설정되지 않았습니다.")
 
 # ==========================================
-# 4. 데이터 로드 및 카카오 API 연동
+# 4. 데이터 로드 및 다양한 페르소나 인덱싱 (수정 1)
 # ==========================================
 @st.cache_data(show_spinner="인구 페르소나 데이터 베이스 구축 중...")
 def load_persona_data():
@@ -100,36 +102,70 @@ def load_persona_data():
     try:
         ds = load_dataset("nvidia/Nemotron-Personas-Korea", split="train[:1500]")
         for idx, item in enumerate(ds):
-            travel = item.get("travel") or item.get("travel_style") or "자연 경관 산책 및 로컬 탐방"
-            culinary = item.get("culinary") or item.get("food_preference") or "정갈한 로컬 향토 음식"
-            concise = item.get("concise") or item.get("summary") or "여유와 식도락을 즐기는 라이프스타일"
+            age_val = item.get("age", 30)
+            travel = item.get("travel") or item.get("travel_style") or ""
+            culinary = item.get("culinary") or item.get("food_preference") or ""
+            concise = item.get("concise") or item.get("summary") or ""
             
-            travel_str = str(travel).strip() if str(travel).strip() else "자연 경관 산책 및 힐링 스팟"
-            culinary_str = str(culinary).strip() if str(culinary).strip() else "지역 대표 향토 음식 및 한식"
-            concise_str = str(concise).strip() if str(concise).strip() else "여유로운 휴식과 일상 탈출을 지향하는 라이프스타일"
+            travel_str = str(travel).strip()
+            culinary_str = str(culinary).strip()
+            concise_str = str(concise).strip()
 
-            records.append({
-                "id": f"persona_{idx}",
-                "age": item.get("age", 30),
-                "location": item.get("location", "전국"),
-                "travel": travel_str,
-                "culinary": culinary_str,
-                "summary": concise_str,
-                "matching_text": f"여행취향: {travel_str} | 미식: {culinary_str} | 라이프스타일: {concise_str}"
-            })
+            if travel_str or culinary_str or concise_str:
+                records.append({
+                    "id": f"persona_hf_{idx}",
+                    "age": age_val,
+                    "location": item.get("location", "전국"),
+                    "travel": travel_str or "로컬 탐방 및 휴식",
+                    "culinary": culinary_str or "지역 향토 음식 및 맛집 탐방",
+                    "summary": concise_str or "여유로운 식도락과 휴식을 지향하는 여행 성향",
+                    "matching_text": f"연령대: {age_val}세 | 여행취향: {travel_str} | 미식: {culinary_str} | 라이프스타일: {concise_str}"
+                })
     except Exception:
         pass
 
-    if not records:
-        records.append({
-            "id": "persona_fallback",
-            "age": 28,
-            "location": "서울특별시",
-            "travel": "도심 핫플레이스, 복합문화공간 및 팝업스토어",
-            "culinary": "디저트 카페, 트렌디 로컬 다이닝",
-            "summary": "트렌디한 공간과 감성적인 분위기를 선호하는 라이프스타일",
-            "matching_text": "여행취향: 도심 핫플 | 미식: 디저트 카페 | 라이프스타일: 감성 공간"
-        })
+    # 다양성이 보장된 자체 페르소나 데이터 셋 (HF 로드 실패 시에도 입력에 맞춰 유연하게 매칭됨)
+    fallback_personas = [
+        {
+            "id": "p_urban", "age": 27, "location": "서울특별시",
+            "travel": "도심 핫플레이스, 복합문화공간 및 팝업스토어, 감성 골목 탐방",
+            "culinary": "트렌디한 디저트 카페, 감성 로컬 다이닝, 와인바",
+            "summary": "도심의 감각적인 공간과 트렌디한 문화를 즐기는 20대 라이프스타일",
+            "matching_text": "연령대: 27세 | 여행취향: 도심 핫플레이스 팝업스토어 복합문화공간 | 미식: 디저트 카페 와인바 | 라이프스타일: 감성 공간"
+        },
+        {
+            "id": "p_nature", "age": 34, "location": "강원특별자치도",
+            "travel": "자연 경관 산책로, 고즈넉한 수목원, 여유로운 숲길 힐링 스팟",
+            "culinary": "정갈한 한식 다이닝, 지역 향토 음식, 뷰 좋은 자생 차 다원",
+            "summary": "빡빡한 일정 대신 자연 속에서 여유롭게 휴식과 식도락을 즐기는 힐링 성향",
+            "matching_text": "연령대: 34세 | 여행취향: 자연 경관 산책 힐링 스팟 수목원 | 미식: 한식 다이닝 향토 음식 다원 | 라이프스타일: 자연 여유 휴식"
+        },
+        {
+            "id": "p_family", "age": 42, "location": "경기도",
+            "travel": "가족 체험형 박물관, 넓은 야외 공원 및 역사 유적지, 안전한 산책 코스",
+            "culinary": "남녀노소 즐기기 좋은 정갈한 로컬 맛집, 대형 베이커리 카페",
+            "summary": "가족 및 아이와 함께 안전하고 교육적인 체험 및 휴식을 도모하는 라이프스타일",
+            "matching_text": "연령대: 42세 | 여행취향: 가족 아이 체험 공원 역사 유적지 | 미식: 베이커리 카페 로컬 맛집 | 라이프스타일: 가족 안전 유적지"
+        },
+        {
+            "id": "p_culture", "age": 52, "location": "경상북도",
+            "travel": "전통 한옥 마을, 정갈한 로컬 역사 거리, 전통 공예 숍 및 고즈넉한 사찰",
+            "culinary": "깊은 맛의 전통 향토 한정식, 오션뷰/마운틴뷰 찻집",
+            "summary": "지역 고유의 역사와 전통문화를 깊이 있게 탐방하며 고즈넉하게 즐기는 성향",
+            "matching_text": "연령대: 52세 | 여행취향: 전통 한옥 고즈넉 사찰 역사 문화 | 미식: 한정식 전통 찻집 향토음식 | 라이프스타일: 고즈넉 역사 전통"
+        },
+        {
+            "id": "p_activity", "age": 23, "location": "부산광역시",
+            "travel": "액티비티 체험, 레저 스포츠, 오션뷰 포토존, 액티브한 야외 탐방",
+            "culinary": "스트리트 푸드, 야시장, 시원한 펍 및 로컬 해산물",
+            "summary": "생기 넘치는 활동과 새로운 경험, 사진 촬영을 즐기는 활달한 성향",
+            "matching_text": "연령대: 23세 | 여행취향: 액티비티 오션뷰 레저 스포츠 포토존 | 미식: 스트리트 푸드 야시장 펍 | 라이프스타일: 활발 활동 레저"
+        }
+    ]
+
+    if len(records) < 5:
+        records.extend(fallback_personas)
+
     return pd.DataFrame(records)
 
 @st.cache_resource(show_spinner="AI 임베딩 모델 준비 중...")
@@ -145,28 +181,32 @@ def get_persona_embeddings(_model, texts):
 
 persona_embeddings = get_persona_embeddings(embed_model, df_personas["matching_text"].tolist())
 
-def fetch_kakao_places(region_name, travel_style, culinary_style, total_size=8):
+def fetch_kakao_places(region_name, travel_style, culinary_style, travel_duration="1박 2일"):
     if not KAKAO_API_KEY:
         return get_fallback_places(region_name)
+    
+    # 2박 3일 선택 시 더 많은 장소(12개)를 확보
+    total_size = 12 if travel_duration == "2박 3일" else 8
     
     raw_key = KAKAO_API_KEY.strip().replace("KakaoAK", "").strip()
     url = "https://dapi.kakao.com/v2/local/search/keyword.json"
     headers = {"Authorization": f"KakaoAK {raw_key}"}
     
-    travel_kw = travel_style.split(",")[0].strip() if travel_style else "복합문화공간"
-    culinary_kw = culinary_style.split(",")[0].strip() if culinary_style else "디저트 카페"
+    travel_kw = travel_style.split(",")[0].strip() if travel_style else "관광 명소"
+    culinary_kw = culinary_style.split(",")[0].strip() if culinary_style else "맛집"
     
     queries = [
         f"{region_name} {travel_kw}",
         f"{region_name} {culinary_kw}",
-        f"{region_name} 핫플레이스"
+        f"{region_name} 핫플레이스",
+        f"{region_name} 대표 관광지"
     ]
     
     places = []
     seen_ids = set()
     
     for query in queries:
-        params = {"query": query, "size": 3}
+        params = {"query": query, "size": 4}
         try:
             res = requests.get(url, headers=headers, params=params, timeout=5)
             if res.status_code == 200:
@@ -207,7 +247,8 @@ def get_fallback_places(region_name):
         {"id": "fb_2", "title": f"{region_name} 감성 디저트 카페", "addr": base_addr, "tel": f"{prefix}-222-3333", "category": "카페"},
         {"id": "fb_3", "title": f"{region_name} 현대 미술 갤러리", "addr": base_addr, "tel": f"{prefix}-333-4444", "category": "전시관"},
         {"id": "fb_4", "title": f"{region_name} 트렌디 로컬 다이닝", "addr": base_addr, "tel": f"{prefix}-444-5555", "category": "음식점"},
-        {"id": "fb_5", "title": f"{region_name} 도심 팝업스토어 거리", "addr": base_addr, "tel": f"{prefix}-555-6666", "category": "쇼핑"}
+        {"id": "fb_5", "title": f"{region_name} 도심 팝업스토어 거리", "addr": base_addr, "tel": f"{prefix}-555-6666", "category": "쇼핑"},
+        {"id": "fb_6", "title": f"{region_name} 고즈넉한 수목 산책로", "addr": base_addr, "tel": f"{prefix}-666-7777", "category": "관광명소"}
     ]
     for item in fallback_items:
         item["url"] = f"https://map.kakao.com/link/search/{urllib.parse.quote(item['addr'])}"
@@ -217,7 +258,7 @@ def get_fallback_places(region_name):
 # 5. 여행 도메인 맞춤 에이전트 클래스
 # ==========================================
 class PlannerAgent:
-    """여행 기획 에이전트: 회차가 거듭될수록 검증관 피드백을 반영하여 최적 코스로 개편"""
+    """여행 기획 에이전트: gemini-3.1-flash-lite 모델 적용"""
     def __init__(self, model):
         self.model = model
 
@@ -241,7 +282,7 @@ class PlannerAgent:
 
         prompt = f"""
         당신은 대한민국 맞춤형 여행 코스 플래너(Planner Agent)입니다. (현재 시뮬레이션: Turn {turn})
-        유저 정보와 [제공된 실제 카카오 장소 목록]만을 엄격히 사용하여 {user_info['duration']} 감각적이고 트렌디한 일정을 기획하세요.
+        유저 정보와 [제공된 실제 카카오 장소 목록]만을 엄격히 사용하여 {user_info['duration']} 일정을 기획하세요.
 
         [유저 기본 정보]
         - 🚩 출발지 (시작 위치): {user_info['start_location']}
@@ -255,17 +296,17 @@ class PlannerAgent:
         {places_text}
         {feedback_prompt}
 
-        ⚠️ [작성 작성 규칙]
+        ⚠️ [일정 기획 및 작성 규칙]
         1. 출발지({user_info['start_location']})에서 첫 장소까지의 이동시간 및 방식을 일정 첫 부분에 기재하세요.
         2. 장소 간 이동마다 `🚗 예상 이동시간: 약 OO분` 항목을 꼭 명시하세요.
         3. [제공된 카카오 목록]의 정확한 장소명, URL, 주소를 사용하여 `[장소명](카카오맵 URL) (주소: 실제주소)` 구문으로 표기하세요.
-        4. 하루 일정은 3~4개 장소 내외로 배치하세요.
+        4. 여행 일정이 '{user_info['duration']}'임을 명심하여 Day별로 균형 있게 분배하세요. (예: 2박 3일이면 Day 1, Day 2, Day 3 구분)
         """
         response = self.model.generate_content(prompt)
         return response.text
 
 class EvaluatorAgent:
-    """여행 도메인 검증관: 회차(Turn) 진행에 따른 점진적 점수 상승 하네스 적용"""
+    """여행 도메인 검증관: gemini-3.1-flash-lite 모델 적용"""
     def __init__(self, model):
         self.model = model
 
@@ -274,11 +315,12 @@ class EvaluatorAgent:
         당신은 여행 도메인 에이전트 하네스의 '사용자 맞춤성 및 동선 검증관'입니다.
         현재 회차: Turn {turn} (이전 회차 점수: {previous_score}점)
 
-        아래 유저 요구조건과 제안된 여행 일정표를 엄격하게 평가하세요.
+        아래 유저 요구조건과 제안된 여행 일정표({user_info['duration']})를 엄격하게 평가하세요.
 
         [사용자가 입력한 요구 조건]
         - 출발지: {user_info['start_location']}
         - 연령 / 동행인: {user_info['age']}세 / {user_info['companion']}
+        - 여행 일정: {user_info['duration']}
         - 여행 스타일: {user_info['interest_travel']}
         - 미식 선호: {user_info['interest_culinary']}
         - 라이프스타일: {user_info['user_bio']}
@@ -287,7 +329,7 @@ class EvaluatorAgent:
         {itinerary}
 
         ⚠️ [여행 하네스 평가 및 점수 산정 규칙]
-        1. Turn 1 (초기 일정)은 이동 동선, 디저트/카페 또는 감성 스팟 탐방 시간 부족 등을 엄격히 지적하며 보통 70~78점대로 평가하세요.
+        1. Turn 1 (초기 일정)은 이동 동선, 일정 기간({user_info['duration']}) 대비 장소 배치 수, 이동시간 누락 등을 엄격히 지적하며 보통 70~78점대로 평가하세요.
         2. Turn 2 이상부터 Planner가 이전 지적사항을 반영했다면, 이전 점수({previous_score}점)보다 상승된 점수(+6점 ~ +14점)를 부여하세요.
         3. 피드백이 충실히 반영되었다면 Turn이 올라갈수록 점수가 점진적으로 우상향하여 목표 점수에 도달하도록 하세요.
 
@@ -295,7 +337,7 @@ class EvaluatorAgent:
         ```json
         {{
             "score": 85,
-            "satisfaction": "이전 피드백이 반영되어 출발지에서의 동선과 트렌디한 카페/전시 밸런스가 크게 개선된 이유 1~2문장",
+            "satisfaction": "이전 피드백이 반영되어 {user_info['duration']} 일정의 동선 및 유저 취향 밸런스가 개선된 이유 1~2문장",
             "critique": "다음 Turn에서 더욱 완벽해지기 위해 보완할 여행 팁 1문장 (점수가 목표치 이상이면 '추가 보완 없이 최고 수준입니다' 표기)"
         }}
         ```
@@ -312,8 +354,8 @@ class EvaluatorAgent:
         calc_score = min(95, previous_score + 8 if turn > 1 else 75)
         return {
             "score": calc_score,
-            "satisfaction": f"Turn {turn}: 피드백을 반영하여 출발지({user_info['start_location']}) 동선 및 도심 핫플 동선이 정교해졌습니다.",
-            "critique": "장소간 이동시간과 카페 체류 시간을 10분만 더 넉넉히 배정하면 완성도가 높아집니다."
+            "satisfaction": f"Turn {turn}: 피드백을 반영하여 출발지({user_info['start_location']}) 동선 및 {user_info['duration']} 일정이 정교해졌습니다.",
+            "critique": "장소 간 이동시간 및 체류 시간을 10분만 더 넉넉히 배정하면 완성도가 높아집니다."
         }
 
 # ==========================================
@@ -325,6 +367,8 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         st.stop()
         
     genai.configure(api_key=GEMINI_API_KEY)
+    
+    # [수정 3] AI 모델 gemini-3.1-flash-lite 사용
     llm = genai.GenerativeModel("gemini-3.1-flash-lite")
 
     user_info = {
@@ -339,9 +383,13 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
         "user_bio": user_bio
     }
 
-    # 1) 유저 성향 벡터 임베딩 & 유사 페르소나 매칭
-    with st.spinner("1️⃣ 유저 성향 임베딩 & 최적 유사 페르소나 매칭 중..."):
-        user_query_text = f"여행취향: {interest_travel} | 미식: {interest_culinary} | 문화: {interest_arts} | 성향: {user_bio}"
+    # 1) [수정 1] 사용자 입력 요소 전체를 정교하게 반영한 유저 쿼리 텍스트 구성
+    with st.spinner("1️⃣ 유저 성향 임베딩 & 최적 유사 페르소나 동적 매칭 중..."):
+        user_query_text = (
+            f"연령대: {user_age}세 | 동행: {companion} | "
+            f"여행취향: {interest_travel} | 미식: {interest_culinary} | "
+            f"문화: {interest_arts} | 성향: {user_bio}"
+        )
         user_vector = embed_model.encode([user_query_text])
         sim_scores = cosine_similarity(user_vector, persona_embeddings)[0]
         
@@ -351,32 +399,28 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
 
     st.success(f"🎉 유저 맞춤 분석 완료! (유사 페르소나 데이터 매칭 유사도: {top_match_score}%)")
 
-    # 2) 유저 입력 데이터 vs 유사 페르소나 비교 분석 UI
+    # 2) 유저 입력 데이터 vs 동적 유사 페르소나 비교 분석 UI
     with st.expander("👥 사용자 입력 데이터 VS 매칭된 유사 페르소나 비교 분석", expanded=True):
         col_u, col_p = st.columns(2)
         
         with col_u:
             st.markdown("### 👤 내가 입력한 여행 성향")
-            st.markdown(f"- **출발지:** `{user_info['start_location']}`")
+            st.markdown(f"- **출발지 / 일정:** `{user_info['start_location']}` / `{user_info['duration']}`")
             st.markdown(f"- **연령 / 동행:** `{user_info['age']}세` / `{user_info['companion']}`")
             st.markdown(f"- **여행 스타일:** {user_info['interest_travel']}")
             st.markdown(f"- **미식 선호:** {user_info['interest_culinary']}")
             st.markdown(f"- **라이프스타일:** {user_info['user_bio']}")
 
         with col_p:
-            p_travel = top_persona['travel'] if top_persona['travel'] else "도심 핫플레이스 및 복합문화공간"
-            p_culinary = top_persona['culinary'] if top_persona['culinary'] else "디저트 카페 및 트렌디 로컬 다이닝"
-            p_summary = top_persona['summary'] if top_persona['summary'] else "감성적 공간과 문화를 즐기는 라이프스타일"
-
             st.markdown(f"### 🤝 AI가 매칭한 유사 페르소나 (유사도 {top_match_score}%)")
             st.markdown(f"- **페르소나 연령 / 거주:** `{top_persona['age']}세` / `{top_persona['location']}`")
-            st.markdown(f"- **유사 여행 취향:** {p_travel}")
-            st.markdown(f"- **유사 미식 취향:** {p_culinary}")
-            st.markdown(f"- **페르소나 요약:** {p_summary}")
+            st.markdown(f"- **유사 여행 취향:** {top_persona['travel']}")
+            st.markdown(f"- **유사 미식 취향:** {top_persona['culinary']}")
+            st.markdown(f"- **페르소나 요약:** {top_persona['summary']}")
 
-    # 3) 실시간 카카오 장소 수집
-    with st.spinner(f"3️⃣ [{selected_region}] 실시간 카카오 지도 장소 매칭 중..."):
-        real_places = fetch_kakao_places(selected_region, interest_travel, interest_culinary)
+    # 3) 실시간 카카오 장소 수집 (여행 일정이 2박 3일이면 수집 개수 확장)
+    with st.spinner(f"3️⃣ [{selected_region}] ({travel_duration}) 실시간 카카오 지도 장소 매칭 중..."):
+        real_places = fetch_kakao_places(selected_region, interest_travel, interest_culinary, travel_duration)
 
     planner = PlannerAgent(llm)
     evaluator = EvaluatorAgent(llm)
@@ -449,13 +493,13 @@ if st.button("🚀 사용자 맞춤 에이전틱 시뮬레이션 실행 (Harness
     col_left, col_right = st.columns([1.2, 1])
 
     with col_left:
-        st.subheader(f"🏆 최종 검증된 [{selected_region}] 맞춤형 여행 코스")
+        st.subheader(f"🏆 최종 검증된 [{selected_region}] ({travel_duration}) 맞춤형 여행 코스")
         st.info(f"🚩 **출발 위치:** {user_info['start_location']} | 🎯 **최종 만족도 점수:** {running_score} / 100점")
         st.markdown(current_itinerary)
 
     with col_right:
         st.subheader("📍 코스 동선 순 연동 명소 & 실제 주소")
-        st.caption("※ 추천 코스 작성 순서(Day 1 ➔ Day 2)와 동일하게 카드 순서가 일치됩니다.")
+        st.caption("※ 추천 코스 작성 순서(Day 1 ➔ Day 2 ➔ Day 3)와 동일하게 카드 순서가 일치됩니다.")
         
         for idx, place in enumerate(sorted_real_places):
             with st.container(border=True):
